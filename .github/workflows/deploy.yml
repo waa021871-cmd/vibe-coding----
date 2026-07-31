@@ -1,0 +1,43 @@
+# ===== 积分系统 · GitHub Pages 自动部署 =====
+name: 部署到 GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # 允许手动触发（在 GitHub Actions 页面点按钮）
+  workflow_dispatch:
+
+# 设置 GITHUB_TOKEN 权限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Pages
+        uses: actions/configure-pages@v4
+
+      - name: 上传文件
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+          # 只上传这些文件到 Pages
+          # 排除 .git、.github、.claude 等
+
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
