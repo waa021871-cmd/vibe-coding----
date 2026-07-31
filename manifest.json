@@ -1,0 +1,25 @@
+{
+  "name": "我的积分系统",
+  "short_name": "积分",
+  "description": "个人积分自律管理 · 莫兰迪自然风",
+  "start_url": "/vibe-coding----/",
+  "scope": "/vibe-coding----/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#C3CFD4",
+  "background_color": "#C3CFD4",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

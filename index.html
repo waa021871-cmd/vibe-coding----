@@ -1,0 +1,3063 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的积分系统 · 莫兰迪自然风</title>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <!-- ===== Supabase 云同步 SDK 引入 ===== -->
+  <!-- 使用 UMD 版本，确保浏览器中 window.supabase 全局可用 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- ===== PWA 配置 ===== -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#C3CFD4">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="我的积分">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&family=Noto+Serif+SC:wght@400;500;600;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", "Noto Serif SC", sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(175deg, #C3CFD4 0%, #B2C3CA 25%, #BAC9C3 55%, #C5D0C8 100%);
+      background-attachment: fixed;
+      display: flex; justify-content: center; align-items: flex-start;
+      padding: 44px 20px 120px; overflow-x: hidden;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(ellipse at 15% 20%, rgba(200,180,160,0.12) 0%, transparent 55%),
+        radial-gradient(ellipse at 85% 70%, rgba(160,180,170,0.10) 0%, transparent 55%),
+        radial-gradient(ellipse at 50% 50%, rgba(180,170,155,0.06) 0%, transparent 70%);
+    }
+
+    .container { max-width: 560px; width: 100%; position: relative; z-index: 1; }
+
+    /* ========== 积分看板（金库） ========== */
+    .scoreboard {
+      background: #F8F8F3; border-radius: 32px;
+      padding: 38px 32px 30px; text-align: center;
+      box-shadow: 0 12px 36px rgba(42,59,53,0.07), 0 2px 8px rgba(42,59,53,0.04);
+      margin-bottom: 20px; position: relative; overflow: hidden;
+      transition: box-shadow 0.4s ease;
+    }
+    .scoreboard.vault-glow {
+      box-shadow: 0 12px 36px rgba(200,91,56,0.12), 0 0 0 8px rgba(200,133,62,0.08), 0 2px 8px rgba(42,59,53,0.04);
+    }
+    .scoreboard::before {
+      content: ""; position: absolute; top: -55px; right: -55px;
+      width: 160px; height: 160px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(107,143,113,0.14) 0%, transparent 70%);
+    }
+    .scoreboard::after {
+      content: ""; position: absolute; bottom: -60px; left: -60px;
+      width: 200px; height: 200px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(200,91,56,0.09) 0%, transparent 70%);
+    }
+    .scoreboard .label {
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+      font-size: 13px; color: #8A9B92; letter-spacing: 4px; margin-bottom: 8px;
+      position: relative; z-index: 1; text-transform: uppercase; font-weight: 500;
+    }
+    .scoreboard .points {
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+      font-size: 72px; font-weight: 700; color: #C85B38;
+      transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275), color 0.3s ease;
+      position: relative; z-index: 1; line-height: 1.1;
+    }
+    .scoreboard .points.bump { transform: scale(1.12); }
+    .scoreboard .points.earned { color: #6B8F71; }
+    .scoreboard .points.spent { color: #C85B38; }
+    .scoreboard .points.shake { animation: shake 0.4s ease; }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20% { transform: translateX(-5px); }
+      40% { transform: translateX(5px); }
+      60% { transform: translateX(-4px); }
+      80% { transform: translateX(4px); }
+    }
+
+    /* 熔断进度条 */
+    .daily-bar-wrap {
+      position: relative; z-index: 1; margin-top: 18px;
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; font-size: 11px; color: #8A9B92;
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+    }
+    .daily-bar-outer {
+      width: 140px; height: 5px; background: #E1E8DC;
+      border-radius: 999px; overflow: hidden;
+    }
+    .daily-bar-inner {
+      height: 100%; border-radius: 999px;
+      transition: width 0.4s ease, background 0.4s ease;
+    }
+    .daily-bar-inner.safe { background: #6B8F71; }
+    .daily-bar-inner.warn { background: #C8853E; }
+    .daily-bar-inner.full { background: #C85B38; }
+
+    /* ========== 分段胶囊切换器 ========== */
+    .segmented-control {
+      display: flex; position: relative;
+      background: #DCE3D8; border-radius: 999px; padding: 4px;
+      margin-bottom: 20px;
+      box-shadow: inset 0 1px 4px rgba(42,59,53,0.06);
+    }
+    .segmented-control .slider {
+      position: absolute; top: 4px; left: 4px;
+      width: calc(100% / 3 - 8px); height: calc(100% - 8px);
+      background: #F8F8F3; border-radius: 999px;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 2px 8px rgba(42,59,53,0.08), 0 1px 3px rgba(42,59,53,0.04);
+      z-index: 0;
+    }
+    .segmented-control .segment {
+      flex: 1; text-align: center; padding: 13px 8px;
+      border-radius: 999px; cursor: pointer;
+      position: relative; z-index: 1;
+      transition: color 0.3s ease;
+      font-size: 14px; font-weight: 500; color: #8A9B92;
+      border: none; background: transparent;
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+      letter-spacing: 0.5px; white-space: nowrap;
+    }
+    .segmented-control .segment.active { color: #2A3B35; font-weight: 600; }
+
+    /* ========== 视图面板 ========== */
+    .view-container { position: relative; }
+    .view-panel {
+      display: none; opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .view-panel.active { display: block; opacity: 1; }
+
+    /* ========== 卡片 ========== */
+    .card {
+      background: #F8F8F3; border-radius: 28px;
+      padding: 26px 24px 22px;
+      box-shadow: 0 8px 28px rgba(42,59,53,0.05), 0 1px 4px rgba(42,59,53,0.03);
+      margin-bottom: 18px; transition: box-shadow 0.3s ease;
+    }
+    .card h2, .card .card-title {
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+      font-size: 16px; font-weight: 600; letter-spacing: 1.5px;
+      margin-bottom: 18px; display: flex; align-items: center; gap: 8px;
+    }
+
+    /* ========== 概览 - 愿望目标 ========== */
+    .goal-card .goal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .goal-card .goal-header .card-title { margin-bottom: 0; }
+    .goal-card .btn-edit-goal {
+      background: none; border: 1.5px solid #D5CFC6;
+      color: #8A9B92; padding: 6px 14px; border-radius: 999px;
+      font-size: 12px; font-family: inherit; cursor: pointer;
+      transition: all 0.2s; letter-spacing: 0.5px;
+    }
+    .goal-card .btn-edit-goal:hover {
+      border-color: #C8A090; color: #C85B38; background: #FAF5F0;
+    }
+    .goal-name {
+      font-size: 15px; color: #5A6B62; margin-bottom: 12px;
+      font-weight: 500; letter-spacing: 0.5px;
+    }
+    .goal-name.empty { color: #B5BFAE; font-style: italic; }
+    .goal-bar-outer {
+      height: 10px; background: #E1E8DC; border-radius: 999px;
+      overflow: hidden; margin-bottom: 8px;
+    }
+    .goal-bar-inner {
+      height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, #6B8F71, #C8853E, #C85B38);
+      transition: width 0.5s ease;
+    }
+    .goal-stats {
+      font-size: 13px; color: #8A9B92;
+      font-family: 'Playfair Display', 'Georgia', serif;
+      text-align: center;
+    }
+    .goal-reached {
+      text-align: center; font-size: 15px; font-weight: 600;
+      color: #C85B38; margin-top: 10px;
+      animation: goalCelebrate 0.6s ease;
+    }
+    @keyframes goalCelebrate {
+      0% { transform: scale(0.5); opacity: 0; }
+      50% { transform: scale(1.15); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .goal-set-form {
+      display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;
+    }
+    .goal-set-form input {
+      flex: 1; min-width: 80px; padding: 10px 14px;
+      border-radius: 999px; border: 1.5px solid #D5CFC6;
+      font-size: 13px; font-family: inherit; outline: none;
+      background: #F8F8F3; color: #2A3B35;
+      transition: border-color 0.25s;
+    }
+    .goal-set-form input:focus { border-color: #8A9B92; }
+    .goal-set-form input::placeholder { color: #B5BFAE; }
+    .goal-set-form button {
+      padding: 10px 18px; border-radius: 999px; border: none;
+      background: #5B7B8A; color: #F8F8F3;
+      font-size: 13px; font-family: inherit; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .goal-set-form button:hover { background: #4A6775; }
+
+    /* 多愿望列表 */
+    .goal-list { display: flex; flex-direction: column; gap: 14px; }
+    .goal-item {
+      background: #F4F2EC; border-radius: 18px; padding: 14px 16px;
+      transition: background 0.3s;
+    }
+    .goal-item.reached { background: #FBF6EE; }
+    .goal-item-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .goal-item-name { font-size: 14px; font-weight: 500; color: #5A6B62; letter-spacing: 0.5px; }
+    .goal-item.reached .goal-item-name { color: #C85B38; }
+    .goal-item-actions { display: flex; gap: 2px; }
+    .goal-item-btn {
+      background: none; border: none; font-size: 17px; cursor: pointer;
+      opacity: 0.35; transition: opacity 0.2s, color 0.2s; padding: 2px 5px;
+      line-height: 1;
+    }
+    .goal-item-btn:hover { opacity: 1; }
+    .goal-item-btn.btn-goal-edit { color: #5B7B8A; }
+    .goal-item-btn.btn-goal-del { color: #B55A3E; }
+    .goal-item .goal-bar-outer { height: 8px; margin-bottom: 4px; }
+    .goal-item .goal-stats { font-size: 12px; color: #8A9B92; text-align: left; font-family: 'Playfair Display', 'Georgia', serif; }
+    .goal-item .goal-reached-badge {
+      font-size: 12px; color: #C85B38; font-weight: 600;
+      animation: goalCelebrate 0.6s ease;
+    }
+    .goal-empty { text-align: center; color: #B5BFAE; padding: 20px 0; font-size: 14px; }
+
+    /* 任务编辑按钮 */
+    .btn .edit-task {
+      margin-left: 2px; font-size: 16px; line-height: 1;
+      cursor: pointer; opacity: 0.4; transition: opacity 0.2s, color 0.2s;
+      padding: 2px 5px; border-radius: 50%; color: #5B7B8A; font-weight: 400;
+    }
+    .btn .edit-task:hover { opacity: 1; background: rgba(91,123,138,0.1); }
+    .btn-cancel-edit {
+      padding: 11px 16px; border-radius: 999px;
+      border: 1.5px solid #D5CFC6; background: transparent;
+      color: #8A9B92; font-size: 13px; font-family: inherit;
+      cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .btn-cancel-edit:hover { border-color: #C8A090; color: #C85B38; background: #FAF5F0; }
+
+    /* 收藏按钮 */
+    .btn-bookmark {
+      background: none; border: none; font-size: 20px; line-height: 1;
+      cursor: pointer; opacity: 0.55; transition: opacity 0.2s, color 0.2s, transform 0.2s;
+      padding: 4px 6px; color: #B5BFAE; flex-shrink: 0; margin-left: 4px;
+    }
+    .btn-bookmark:hover { opacity: 1; transform: scale(1.25); }
+    .btn-bookmark.bookmarked { color: #E8A030; opacity: 0.9; }
+    .btn-bookmark.bookmarked:hover { opacity: 1; transform: scale(1.15); }
+
+    /* 愿望清单中来自兑换商店的收藏项 */
+    .goal-item.bookmarked-exchange { background: #F8F4F0; border: 1px dashed #E0D5C0; }
+    .goal-item .goal-source-tag {
+      display: inline-block; font-size: 10px; color: #8B7E9B;
+      background: #EBE4ED; padding: 2px 8px; border-radius: 999px;
+      margin-left: 6px; letter-spacing: 0.5px; vertical-align: middle;
+    }
+
+    /* ========== 概览 - 今日汇总 ========== */
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .summary-item {
+      text-align: center; padding: 16px 10px; border-radius: 20px;
+      background: #F4F2EC;
+    }
+    .summary-item .s-val {
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-size: 28px; font-weight: 700;
+    }
+    .summary-item .s-val.earn { color: #6B8F71; }
+    .summary-item .s-val.spend { color: #C85B38; }
+    .summary-item .s-val.net-pos { color: #6B8F71; }
+    .summary-item .s-val.net-neg { color: #C85B38; }
+    .summary-item .s-label {
+      font-size: 11px; color: #8A9B92; letter-spacing: 1px;
+      margin-top: 4px;
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+    }
+    .summary-item.full-width { grid-column: 1 / -1; }
+
+    /* 生成发票大按钮 */
+    .btn-invoice-hero {
+      display: flex; align-items: center; justify-content: center;
+      gap: 10px; width: 100%; padding: 18px 24px;
+      border-radius: 999px; border: 2px dashed #C8853E;
+      background: #FBF6EE; color: #8B5E3C;
+      font-size: 16px; font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+      font-weight: 600; cursor: pointer;
+      transition: all 0.25s ease; letter-spacing: 1px;
+    }
+    .btn-invoice-hero:hover {
+      background: #F5EADC; border-style: solid;
+      box-shadow: 0 6px 20px rgba(200,133,62,0.15);
+      transform: translateY(-2px);
+    }
+    .btn-invoice-hero:active { transform: scale(0.97); }
+
+    /* ========== 任务视图 - 分类标签栏 ========== */
+    .cat-tabs-wrap {
+      display: flex; align-items: center; gap: 6px;
+      margin-bottom: 18px; overflow-x: auto;
+      scrollbar-width: none; -ms-overflow-style: none;
+      padding-bottom: 4px;
+    }
+    .cat-tabs-wrap::-webkit-scrollbar { display: none; }
+    .cat-tab {
+      padding: 9px 16px; border-radius: 999px;
+      border: 1.5px solid #D5CFC6; background: transparent;
+      cursor: pointer; font-size: 13px; font-family: inherit;
+      transition: all 0.2s ease; color: #8A9B92;
+      white-space: nowrap; flex-shrink: 0; letter-spacing: 0.5px;
+    }
+    .cat-tab:hover { border-color: #B5C8B0; color: #5A7A60; }
+    .cat-tab.active {
+      background: #E1E8DC; border-color: #A0B8A0;
+      color: #4A6A50; font-weight: 600;
+    }
+    .btn-manage-cats {
+      flex-shrink: 0; padding: 9px 14px; border-radius: 999px;
+      border: 1.5px dashed #C5B8A0; background: transparent;
+      cursor: pointer; font-size: 15px; color: #8A9B92;
+      transition: all 0.2s ease; white-space: nowrap;
+    }
+    .btn-manage-cats:hover { border-color: #C8A090; color: #C85B38; background: #FAF5F0; }
+
+    /* ========== 任务卡片按钮 ========== */
+    .task-section-label {
+      font-size: 12px; color: #8A9B92; letter-spacing: 2px;
+      margin: 14px 0 8px;
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+      text-transform: uppercase;
+    }
+    .task-buttons { display: flex; flex-direction: column; gap: 10px; }
+
+    .btn {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 20px; border-radius: 999px; border: none;
+      cursor: pointer; font-size: 15px; font-family: inherit;
+      transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      font-weight: 500; outline: none;
+      position: relative; overflow: hidden;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:hover { transform: translateY(-1px); }
+    .btn .name { display: flex; align-items: center; gap: 10px; }
+    .btn .icon { font-size: 22px; line-height: 1; }
+    .btn .badge, .btn .price {
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-size: 13px; font-weight: 600;
+      padding: 5px 14px; border-radius: 999px;
+      white-space: nowrap; letter-spacing: 0.5px;
+    }
+
+    /* 波纹 */
+    .ripple {
+      position: absolute; border-radius: 50%;
+      background: rgba(200,91,56,0.18);
+      transform: scale(0); animation: ripple 0.6s ease-out;
+      pointer-events: none;
+    }
+    @keyframes ripple { to { transform: scale(4); opacity: 0; } }
+
+    /* 赚取按钮 */
+    .btn-earn { background: #E1E8DC; color: #4A6A50; }
+    .btn-earn:hover { background: #D0DBCA; box-shadow: 0 6px 20px rgba(107,143,113,0.14); }
+    .btn-earn .badge { background: #F8F8F3; color: #C85B38; }
+    .btn-earn.stamped { overflow: visible; }
+
+    /* 扣除按钮 */
+    .btn-spend { background: #F0E0D6; color: #9B4A30; }
+    .btn-spend:hover { background: #E8D4C6; box-shadow: 0 6px 20px rgba(200,91,56,0.14); }
+    .btn-spend.blocked { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+    .btn-spend.blocked:hover { background: #F0E0D6; box-shadow: none; }
+    .btn-spend .badge { background: #F8F8F3; color: #C85B38; }
+
+    /* 兑换按钮 */
+    .btn-exchange { background: #EBE4ED; color: #6B5E7B; }
+    .btn-exchange:hover { background: #DFD6E3; box-shadow: 0 6px 20px rgba(139,126,155,0.14); }
+    .btn-exchange.locked { opacity: 0.5; cursor: not-allowed; }
+    .btn-exchange.locked:hover { background: #EBE4ED; box-shadow: none; }
+    .btn-exchange .price { background: #F8F8F3; color: #C85B38; }
+
+    .btn .del-task {
+      margin-left: 6px; font-size: 17px; line-height: 1;
+      cursor: pointer; opacity: 0.4; transition: opacity 0.2s, color 0.2s;
+      padding: 2px 6px; border-radius: 50%; color: #9B4A30; font-weight: 400;
+    }
+    .btn .del-task:hover { opacity: 1; background: rgba(200,91,56,0.1); }
+
+    /* 新建任务表单 */
+    .btn-new-task {
+      width: 100%; padding: 14px; border-radius: 999px;
+      border: 2px dashed #B5BFAE; background: transparent;
+      cursor: pointer; font-size: 14px; font-family: inherit;
+      color: #8A9B92; transition: all 0.2s; letter-spacing: 1px;
+      margin-top: 18px;
+    }
+    .btn-new-task:hover { border-color: #5B7B8A; color: #5B7B8A; }
+    .task-form-wrap {
+      overflow: hidden; max-height: 0; opacity: 0;
+      transition: max-height 0.35s ease, opacity 0.3s ease, margin 0.3s ease;
+      margin-top: 0;
+    }
+    .task-form-wrap.open { max-height: 300px; opacity: 1; margin-top: 14px; }
+    .task-form-inner {
+      display: grid;
+      grid-template-columns: 1.6fr 0.7fr 1fr;
+      gap: 8px; align-items: center;
+    }
+    .task-form-inner input,
+    .task-form-inner select {
+      padding: 11px 14px; border-radius: 999px;
+      border: 1.5px solid #D5CFC6;
+      font-size: 13px; font-family: inherit; outline: none;
+      transition: border-color 0.25s, box-shadow 0.25s;
+      background: #F8F8F3; color: #2A3B35;
+    }
+    .task-form-inner input::placeholder { color: #B5BFAE; }
+    .task-form-inner input:focus,
+    .task-form-inner select:focus {
+      border-color: #8A9B92;
+      box-shadow: 0 0 0 3px rgba(138,155,146,0.12);
+    }
+    .task-form-inner select { cursor: pointer; }
+    .btn-submit-task {
+      padding: 11px 18px; border-radius: 999px; border: none;
+      background: #5B7B8A; color: #F8F8F3; font-size: 13px;
+      font-family: inherit; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; white-space: nowrap; letter-spacing: 1px;
+      grid-column: 1 / -1;
+    }
+    .btn-submit-task:hover { background: #4A6775; box-shadow: 0 4px 14px rgba(91,123,138,0.25); }
+    .btn-submit-task:active { transform: scale(0.96); }
+
+    /* ========== 账本 - 兑换商店 ========== */
+    .card.exchange h2 { color: #8B7E9B; }
+
+    /* ========== 日志 & 历史 ========== */
+    .log {
+      max-height: 200px; overflow-y: auto; list-style: none;
+      margin-top: 14px; padding-top: 10px;
+      border-top: 1px solid #E1E5DB;
+    }
+    .log li {
+      font-size: 13px; padding: 7px 6px;
+      display: flex; justify-content: space-between; gap: 12px;
+    }
+    .log li .time { white-space: nowrap; color: #B5BFAE; font-size: 11px; }
+    .log li.earn-log { color: #5A7A60; }
+    .log li.spend-log { color: #B55A3E; }
+    .log li.blocked-log { color: #C8853E; text-decoration: line-through; }
+    .log .empty { text-align: center; color: #C5CFC2; font-size: 14px; padding: 20px 0; }
+
+    /* ========== 🪙 投币效果 ========== */
+    .coin {
+      position: fixed; width: 46px; height: 46px; border-radius: 50%;
+      background: linear-gradient(145deg, #F2D680 0%, #D4A84B 40%, #C8853E 100%);
+      border: 3px solid #A8682E;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-weight: 700; font-size: 15px; color: #5A3020;
+      z-index: 1001; pointer-events: none;
+      box-shadow: 0 4px 12px rgba(150,100,40,0.35),
+                  inset 0 2px 4px rgba(255,255,255,0.35),
+                  inset 0 -2px 4px rgba(0,0,0,0.1);
+      text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+      letter-spacing: 0.5px;
+    }
+    .coin.spin { animation: coinSpin 0.6s ease-out forwards; }
+    @keyframes coinSpin {
+      0%   { transform: rotateY(0deg) scale(1); }
+      50%  { transform: rotateY(360deg) scale(1.3); }
+      100% { transform: rotateY(720deg) scale(0.5); }
+    }
+
+    /* 🏷️ 手绘复古盖章 */
+    .stamp-effect {
+      position: absolute; top: -28px; left: 50%; z-index: 10;
+      font-family: 'Georgia', 'Noto Serif SC', serif;
+      font-size: 13px; font-weight: 700; letter-spacing: 3px;
+      color: rgba(74, 106, 80, 0.55);
+      border: 3px solid rgba(74, 106, 80, 0.45);
+      border-radius: 10px; padding: 5px 14px;
+      white-space: nowrap; pointer-events: none;
+      transform: translateX(-50%) rotate(-6deg) scale(2.5);
+      opacity: 0;
+      animation: stampDown 0.9s cubic-bezier(0.25, 0.1, 0.15, 1) forwards;
+      text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+      background: rgba(255,255,255,0.3);
+    }
+    @keyframes stampDown {
+      0%   { transform: translateX(-50%) rotate(-6deg) scale(2.5); opacity: 0; }
+      15%  { transform: translateX(-50%) rotate(-6deg) scale(0.85); opacity: 0.9; }
+      30%  { transform: translateX(-50%) rotate(-6deg) scale(1.05); opacity: 0.75; }
+      45%  { transform: translateX(-50%) rotate(-6deg) scale(0.95); opacity: 0.6; }
+      65%  { transform: translateX(-50%) rotate(-6deg) scale(1); opacity: 0.35; }
+      100% { transform: translateX(-50%) rotate(-6deg) scale(1); opacity: 0; }
+    }
+
+    /* ========== 🖨️ 复古打印机 ========== */
+    .printer-bar {
+      position: fixed; top: -50px; left: 50%; transform: translateX(-50%);
+      width: 400px; max-width: 95vw; height: 36px;
+      background: linear-gradient(180deg, #4A4540 0%, #3A3530 100%);
+      border-radius: 0 0 14px 14px;
+      z-index: 1003; display: flex; align-items: center; justify-content: center;
+      gap: 8px; transition: top 0.4s cubic-bezier(0.25, 0.1, 0.15, 1);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+    }
+    .printer-bar.active { top: 0; }
+    .printer-bar .printer-slot {
+      width: 85%; height: 6px; background: #1A1815;
+      border-radius: 3px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+    }
+    .printer-bar .printer-light {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #C85B38; box-shadow: 0 0 8px rgba(200,91,56,0.6);
+      animation: printerBlink 0.5s ease-in-out infinite;
+    }
+    @keyframes printerBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .printer-status {
+      position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
+      z-index: 1004; font-size: 11px; color: #8A9B92;
+      font-family: 'SF Mono', 'Courier New', monospace;
+      letter-spacing: 1px; opacity: 0; transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .printer-status.show { opacity: 1; }
+
+    /* ========== 发票操作按钮 ========== */
+    .receipt-actions-row {
+      display: flex; gap: 10px; margin-bottom: 18px;
+    }
+    .btn-receipt-archive {
+      width: 100%; padding: 14px 12px; border-radius: 999px;
+      border: 1.5px solid #8A9B92; font-size: 14px; font-family: inherit;
+      font-weight: 600; cursor: pointer;
+      transition: all 0.2s ease; background: #F4F7F2;
+      display: flex; align-items: center; justify-content: center;
+      gap: 6px; color: #4A6555; letter-spacing: 0.5px;
+    }
+    .btn-receipt-archive:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(138,155,146,0.14);
+      background: #E8EFE5;
+    }
+
+    /* ========== Toast ========== */
+    .toast {
+      position: fixed; top: 30px; left: 50%;
+      transform: translateX(-50%) translateY(-120px);
+      background: #2A3B35; color: #F8F8F3;
+      padding: 14px 28px; border-radius: 999px;
+      font-size: 14px; font-weight: 500; font-family: inherit;
+      z-index: 999; pointer-events: none; opacity: 0;
+      transition: transform 0.35s cubic-bezier(0.175,0.885,0.32,1.275),
+                  opacity 0.25s ease;
+      box-shadow: 0 8px 28px rgba(42,59,53,0.2);
+      text-align: center; max-width: 90vw; letter-spacing: 0.5px;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+    .toast.warn { background: #F0E0D6; color: #8B4A28; box-shadow: 0 8px 28px rgba(200,91,56,0.12); }
+    .toast.err  { background: #F0D8D0; color: #9B3A28; box-shadow: 0 8px 28px rgba(200,91,56,0.14); }
+    .toast.ok   { background: #E1E8DC; color: #4A6A50; box-shadow: 0 8px 28px rgba(107,143,113,0.12); }
+
+    /* ========== 粒子 ========== */
+    .particle {
+      position: fixed; pointer-events: none; z-index: 998;
+      font-size: 20px; animation: particleFly 0.85s ease-out forwards;
+    }
+    @keyframes particleFly {
+      0% { opacity: 1; transform: translate(0,0) scale(1); }
+      100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.25); }
+    }
+    .vault-spark {
+      position: fixed; pointer-events: none; z-index: 1002;
+      font-size: 18px; animation: sparkBurst 0.7s ease-out forwards;
+    }
+    @keyframes sparkBurst {
+      0% { opacity: 1; transform: translate(0,0) scale(1.2); }
+      100% { opacity: 0; transform: translate(var(--sx), var(--sy)) scale(0); }
+    }
+
+    /* ========== 弹窗 ========== */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(42,59,53,0.3);
+      display: flex; justify-content: center; align-items: center;
+      z-index: 1000; opacity: 0; pointer-events: none;
+      transition: opacity 0.25s ease;
+      backdrop-filter: blur(2px);
+    }
+    .overlay.show { opacity: 1; pointer-events: auto; }
+    .dialog {
+      background: #F8F8F3; border-radius: 28px;
+      padding: 32px 28px 24px; text-align: center;
+      max-width: 360px; width: 90%;
+      box-shadow: 0 16px 48px rgba(42,59,53,0.15);
+    }
+    .dialog .dialog-icon { font-size: 40px; margin-bottom: 10px; }
+    .dialog p { font-size: 15px; color: #5A6B62; margin-bottom: 8px; line-height: 1.6; }
+    .dialog .dialog-actions { display: flex; gap: 10px; margin-top: 18px; }
+    .dialog .dialog-actions button {
+      flex: 1; padding: 11px 0; border-radius: 999px; border: none;
+      font-size: 14px; font-family: inherit; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; letter-spacing: 0.5px;
+    }
+    .dialog .btn-cancel { background: #E1E5DB; color: #6B7F77; }
+    .dialog .btn-cancel:hover { background: #D5DBCF; }
+    .dialog .btn-confirm { background: #C85B38; color: #F8F8F3; }
+    .dialog .btn-confirm:hover { background: #A8482A; }
+
+    /* ========== 分类管理弹窗 ========== */
+    .cat-mgmt-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; text-align: left; }
+    .cat-mgmt-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border-radius: 16px;
+      background: #F4F2EC; font-size: 14px;
+    }
+    .cat-mgmt-item .cat-mgmt-emoji { font-size: 20px; }
+    .cat-mgmt-item .cat-mgmt-name { flex: 1; color: #2A3B35; font-weight: 500; }
+    .cat-mgmt-item .btn-cat-del {
+      background: none; border: none; font-size: 16px;
+      cursor: pointer; opacity: 0.4; transition: opacity 0.2s;
+      color: #B55A3E; padding: 4px;
+    }
+    .cat-mgmt-item .btn-cat-del:hover { opacity: 1; }
+    .cat-mgmt-add {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .cat-mgmt-add input {
+      padding: 10px 14px; border-radius: 999px;
+      border: 1.5px solid #D5CFC6;
+      font-size: 13px; font-family: inherit; outline: none;
+      background: #F8F8F3; color: #2A3B35;
+      transition: border-color 0.25s;
+    }
+    .cat-mgmt-add input:focus { border-color: #8A9B92; }
+    .cat-mgmt-add input::placeholder { color: #B5BFAE; }
+    .cat-mgmt-add input.emoji-input { width: 54px; text-align: center; }
+    .cat-mgmt-add input.name-input { flex: 1; }
+    .cat-mgmt-add button {
+      padding: 10px 16px; border-radius: 999px; border: none;
+      background: #5B7B8A; color: #F8F8F3;
+      font-size: 13px; font-family: inherit; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .cat-mgmt-add button:hover { background: #4A6775; }
+    .dialog .cat-mgmt-empty { color: #B5BFAE; font-size: 13px; text-align: center; padding: 10px 0; }
+
+    /* ========== 发票弹窗 ========== */
+    .receipt-overlay .receipt-wrap {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 18px; max-height: 90vh; overflow-y: auto;
+      padding: 20px 0; position: relative;
+    }
+    .receipt-paper {
+      background: #FAF6EE;
+      background-image: repeating-linear-gradient(0deg, transparent, transparent 30px, rgba(180,160,130,0.06) 30px, rgba(180,160,130,0.06) 31px);
+      border-radius: 4px; padding: 30px 26px 46px;
+      width: 360px; max-width: 92vw;
+      box-shadow: 0 2px 6px rgba(42,59,53,0.06), 0 10px 32px rgba(42,59,53,0.10);
+      font-family: "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif;
+      position: relative;
+      border: 1.5px dashed #D5CFC0;
+      outline: 6px solid #FAF6EE;
+      outline-offset: 1px;
+      transition: transform 0.3s ease, opacity 0.4s ease;
+      user-select: none;
+    }
+    .receipt-paper.feeding {
+      animation: paperFeed 1.2s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+    }
+    @keyframes paperFeed {
+      0%   { clip-path: inset(0 0 100% 0); opacity: 0.5; }
+      40%  { clip-path: inset(0 0 60% 0); opacity: 0.8; }
+      100% { clip-path: inset(0 0 0% 0); opacity: 1; }
+    }
+    .receipt-paper::after {
+      content: ""; position: absolute; bottom: -10px; left: -2px; right: -2px;
+      height: 18px;
+      background: radial-gradient(circle at 9px 9px, transparent 7px, #FAF6EE 7px) 0 0 / 18px 18px repeat-x;
+      z-index: 2;
+    }
+    .receipt-paper .tear-guide {
+      position: absolute; bottom: 18px; left: 30px; right: 30px;
+      border-top: 1.3px dashed #C5B8A0; z-index: 3;
+      text-align: center; font-size: 10px; color: #B5A890;
+      padding-top: 6px; letter-spacing: 2px;
+      transition: opacity 0.3s;
+    }
+    .receipt-paper.tearable { cursor: grab; }
+    .receipt-paper.tearing { cursor: grabbing; transition: none; }
+    .receipt-paper.torn {
+      animation: tearAway 0.6s cubic-bezier(0.4, 0, 0.6, 1) forwards;
+    }
+    @keyframes tearAway {
+      0%   { transform: translateY(0) rotate(0); opacity: 1; }
+      50%  { transform: translateY(120px) rotate(2deg); opacity: 0.7; }
+      100% { transform: translateY(400px) rotate(-4deg); opacity: 0; }
+    }
+    .receipt-paper.fly-to-archive {
+      animation: flyToArchive 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+    }
+    @keyframes flyToArchive {
+      0%   { transform: translate(0, 0) scale(1) rotate(0); opacity: 1; }
+      30%  { transform: translate(var(--fly-x), var(--fly-y)) scale(0.7) rotate(0); opacity: 0.9; }
+      100% { transform: translate(var(--fly-x), var(--fly-y)) scale(0.15) rotate(-8deg); opacity: 0; }
+    }
+    .receipt-paper .receipt-header { text-align: center; margin-bottom: 18px; }
+    .receipt-paper .receipt-stars {
+      font-size: 12px; color: #B5A890; letter-spacing: 5px;
+      font-family: 'Playfair Display', 'Georgia', serif;
+    }
+    .receipt-paper .receipt-title {
+      font-family: 'Playfair Display', 'Noto Serif SC', 'Georgia', serif;
+      font-size: 17px; font-weight: 700; color: #3A3028;
+      margin: 8px 0; letter-spacing: 2px;
+    }
+    .receipt-paper .receipt-date { font-size: 12px; color: #9B8E7A; margin-top: 6px; }
+    .receipt-paper .receipt-no {
+      font-size: 10px; color: #BBAE96;
+      font-family: 'SF Mono', 'Courier New', monospace;
+    }
+    .receipt-paper .receipt-divider {
+      text-align: center; color: #D5CFC0; font-size: 10px;
+      letter-spacing: 2px; margin: 14px 0; line-height: 1; user-select: none;
+    }
+    .receipt-paper .receipt-items { display: flex; flex-direction: column; gap: 6px; }
+    .receipt-paper .receipt-item {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 13px; padding: 2px 0;
+    }
+    .receipt-paper .receipt-item .item-label {
+      flex: 1; color: #5A4F42; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .receipt-paper .receipt-item .item-dots {
+      color: #D5CFC0; margin: 0 6px; font-size: 9px; flex-shrink: 0;
+    }
+    .receipt-paper .receipt-item .item-pts {
+      font-weight: 600; white-space: nowrap;
+      font-family: 'SF Mono', 'Cascadia Code', 'Courier New', monospace;
+      font-size: 12px;
+    }
+    .receipt-paper .receipt-item .item-pts.earn { color: #5A7A60; }
+    .receipt-paper .receipt-item .item-pts.spend { color: #B55A3E; }
+    .receipt-paper .receipt-summary {
+      display: flex; flex-direction: column; gap: 5px; font-size: 13px; padding: 4px 0;
+    }
+    .receipt-paper .receipt-summary .sum-row {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .receipt-paper .receipt-summary .sum-label { color: #6B5E4F; }
+    .receipt-paper .receipt-summary .sum-val {
+      font-weight: 600;
+      font-family: 'SF Mono', 'Cascadia Code', 'Courier New', monospace;
+    }
+    .receipt-paper .receipt-summary .sum-val.earn { color: #5A7A60; }
+    .receipt-paper .receipt-summary .sum-val.spend { color: #B55A3E; }
+    .receipt-paper .receipt-summary .sum-val.balance {
+      font-size: 16px; color: #C85B38;
+      font-family: 'Playfair Display', 'Georgia', serif;
+    }
+    .receipt-paper .receipt-footer {
+      text-align: center; font-size: 12px; color: #9B8E7A;
+      line-height: 1.8; font-style: italic;
+    }
+    .receipt-paper .receipt-footer .quote-icon {
+      font-size: 14px; display: block; margin-bottom: 4px; font-style: normal;
+    }
+    .receipt-paper .receipt-empty {
+      text-align: center; color: #C5BFB0; padding: 20px 0; font-size: 14px;
+    }
+    .receipt-modal-actions {
+      display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+    }
+    .receipt-modal-actions button {
+      padding: 11px 22px; border-radius: 999px; border: none;
+      font-size: 13px; font-family: inherit; font-weight: 600;
+      cursor: pointer; transition: all 0.2s ease;
+      display: flex; align-items: center; gap: 6px; letter-spacing: 0.5px;
+    }
+    .btn-dl-receipt {
+      background: #E1E8DC; color: #5A7A60; border: 1px solid #C5D4C0;
+    }
+    .btn-dl-receipt:hover { background: #D0DBCA; box-shadow: 0 4px 12px rgba(107,143,113,0.15); }
+    .btn-close-receipt { background: #EDEDE8; color: #8A9B92; }
+    .btn-close-receipt:hover { background: #E0E0D8; }
+
+    /* ========== 历史发票面板 ========== */
+    .card.history .history-toggle {
+      cursor: pointer; user-select: none;
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%;
+    }
+    .card.history .history-toggle .arrow {
+      transition: transform 0.25s ease; font-size: 13px; color: #8A9B92;
+    }
+    .card.history.open .history-toggle .arrow { transform: rotate(180deg); }
+    .card.history .history-body { display: none; margin-top: 16px; }
+    .card.history.open .history-body { display: block; }
+    .card.history.receiving {
+      box-shadow: 0 0 0 6px rgba(200,133,62,0.15), 0 12px 36px rgba(42,59,53,0.08);
+      transition: box-shadow 0.6s ease;
+    }
+    .history-list {
+      display: flex; flex-direction: column; gap: 8px;
+      max-height: 320px; overflow-y: auto;
+    }
+    .history-list .history-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px; border-radius: 20px;
+      background: #F4F2EC; border: 1px solid #E8E4DA;
+      cursor: pointer; transition: all 0.2s ease;
+    }
+    .history-list .history-item:hover {
+      background: #FBF6EE; border-color: #E0D5C0;
+      box-shadow: 0 2px 10px rgba(42,59,53,0.04);
+    }
+    .history-list .history-item .hi-date {
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-weight: 600; color: #4A5045; font-size: 14px;
+    }
+    .history-list .history-item .hi-summary {
+      font-size: 12px; color: #8A9B92; display: flex; gap: 8px;
+    }
+    .history-list .history-item .hi-net {
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-weight: 600; font-size: 15px;
+    }
+    .history-list .history-item .hi-net.positive { color: #6B8F71; }
+    .history-list .history-item .hi-net.negative { color: #C85B38; }
+    .history-list .hi-empty {
+      text-align: center; color: #C5CFC2; padding: 28px 0; font-size: 14px;
+    }
+    .history-list .hi-delete {
+      background: none; border: none; font-size: 15px;
+      cursor: pointer; opacity: 0.35; transition: opacity 0.2s;
+      padding: 4px; color: #B55A3E;
+    }
+    .history-list .hi-delete:hover { opacity: 1; }
+    .history-receipt-overlay .receipt-wrap {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 16px; max-height: 90vh; overflow-y: auto; padding: 20px 0;
+    }
+    .history-receipt-overlay .receipt-paper .archive-badge {
+      display: inline-block; background: #F0E0D6; color: #8B5E3C;
+      font-size: 10px; padding: 3px 12px; border-radius: 999px;
+      margin-bottom: 8px; letter-spacing: 1px;
+    }
+
+    /* ========== 重置 & 恢复 ========== */
+    .reset-wrap { text-align: center; margin-top: 6px; margin-bottom: 30px; }
+    .btn-reset {
+      background: none; border: 1.5px solid #D5CFC6; color: #A0ADA5;
+      padding: 10px 28px; border-radius: 999px; font-size: 13px;
+      font-family: inherit; cursor: pointer; transition: all 0.2s ease;
+      letter-spacing: 1px;
+    }
+    .btn-reset:hover { border-color: #C8A090; color: #C85B38; background: #FAF5F0; }
+    .btn-restore-presets {
+      background: none; border: 1.5px solid #E0D0C0; color: #9B7B5E;
+      padding: 10px 28px; border-radius: 999px; font-size: 13px;
+      font-family: inherit; cursor: pointer; transition: all 0.2s ease;
+      margin-top: 8px; display: block; margin-left: auto; margin-right: auto;
+      letter-spacing: 1px;
+    }
+    .btn-restore-presets:hover { border-color: #C8A080; color: #7B5030; background: #FBF5EE; }
+
+    /* ========== 响应式 ========== */
+    @media (max-width: 480px) {
+      .scoreboard .points { font-size: 54px; }
+      .scoreboard { padding: 28px 22px 22px; border-radius: 26px; }
+      .card { border-radius: 22px; padding: 20px 16px 18px; }
+      .btn { font-size: 14px; padding: 13px 16px; }
+      .segmented-control .segment { font-size: 12px; padding: 11px 6px; }
+      .task-form-inner { grid-template-columns: 1fr 1fr; }
+      .task-form-inner .btn-submit-task { grid-column: 1 / -1; }
+      .receipt-paper { padding: 24px 18px 38px; }
+      .receipt-paper .receipt-title { font-size: 15px; }
+      .receipt-modal-actions { flex-direction: column; }
+      .receipt-modal-actions button { justify-content: center; }
+      .coin { width: 38px; height: 38px; font-size: 13px; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .cat-mgmt-add { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- 🖨️ 复古打印机 -->
+<div class="printer-bar" id="printerBar">
+  <div class="printer-light"></div>
+  <div class="printer-slot"></div>
+  <div class="printer-light" style="animation-delay:0.25s;"></div>
+</div>
+<div class="printer-status" id="printerStatus">打印中...</div>
+
+<div class="container">
+
+  <!-- ====== 积分看板（金库） ====== -->
+  <div class="scoreboard" id="scoreboard">
+    <div class="label">— Current Balance —</div>
+    <div class="points" id="pointsDisplay">0</div>
+    <div class="daily-bar-wrap">
+      <span>今日已扣</span>
+      <span id="dailyBarLabel" style="font-weight:600;">0</span>
+      <div class="daily-bar-outer">
+        <div class="daily-bar-inner safe" id="dailyBarInner" style="width:0%"></div>
+      </div>
+      <span>/ 15 分</span>
+      <span id="dailyBarStatus"></span>
+    </div>
+  </div>
+
+  <!-- ====== 分段胶囊切换器 ====== -->
+  <div class="segmented-control" id="segControl">
+    <div class="slider" id="segSlider"></div>
+    <button class="segment active" data-view="dashboard" onclick="switchView('dashboard')">🏠 概览</button>
+    <button class="segment" data-view="tasks" onclick="switchView('tasks')">🎯 任务</button>
+    <button class="segment" data-view="ledger" onclick="switchView('ledger')">🛍️ 账本</button>
+  </div>
+
+  <!-- ====== 视图容器 ====== -->
+  <div class="view-container" id="viewContainer">
+
+    <!-- ====== 🏠 概览 视图 ====== -->
+    <div class="view-panel active" id="view-dashboard">
+
+      <!-- 愿望清单 -->
+      <div class="card goal-card">
+        <div class="goal-header">
+          <div class="card-title">🎯 愿望清单</div>
+          <button class="btn-edit-goal" onclick="openAddGoal()" id="btnToggleGoal">＋ 添加愿望</button>
+        </div>
+        <div class="goal-list" id="goalList">
+          <!-- 动态渲染 -->
+        </div>
+        <div class="goal-empty" id="goalEmpty" style="display:none;">还没有愿望，点击上方按钮添加吧 ✨</div>
+        <div class="goal-set-form" id="goalSetForm" style="display:none;">
+          <input type="text" id="goalNameInput" placeholder="愿望名称，如：新耳机" maxlength="15">
+          <input type="number" id="goalTargetInput" placeholder="目标积分" value="100" min="1" max="9999" style="max-width:100px;">
+          <button onclick="submitGoal()" id="goalSubmitBtn">💾 保存</button>
+          <button onclick="cancelGoalEdit()" style="background:#E1E5DB;color:#6B7F77;">取消</button>
+        </div>
+      </div>
+
+      <!-- 今日净分值汇总 -->
+      <div class="card">
+        <div class="card-title">📊 今日净分值汇总</div>
+        <div class="summary-grid">
+          <div class="summary-item">
+            <div class="s-val earn" id="sumEarned">+0</div>
+            <div class="s-label">今日赚取</div>
+          </div>
+          <div class="summary-item">
+            <div class="s-val spend" id="sumSpent">−0</div>
+            <div class="s-label">今日扣除 / 消费</div>
+          </div>
+          <div class="summary-item">
+            <div class="s-val net-pos" id="sumNet">0</div>
+            <div class="s-label">今日净变动</div>
+          </div>
+          <div class="summary-item">
+            <div class="s-val" id="sumBalance" style="color:#C85B38;">0</div>
+            <div class="s-label">当前余额</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 生成发票大按钮 -->
+      <button class="btn-invoice-hero" onclick="showReceipt()">
+        🧾 生成今日结算小票
+      </button>
+
+      <!-- 存档按钮 -->
+      <div style="margin-top:12px;">
+        <button class="btn-receipt-archive" onclick="archiveTodayAndClear()">
+          💾 存档并清空今日流水
+        </button>
+      </div>
+
+      <!-- 重置 & 恢复 -->
+      <div class="reset-wrap">
+        <button class="btn-reset" onclick="showResetDialog()">🔄 重置所有数据</button>
+        <button class="btn-restore-presets" id="btnRestorePresets" style="display:none;" onclick="restoreAllPresets()">↩️ 恢复已删除的预设任务</button>
+      </div>
+
+    </div><!-- /dashboard -->
+
+    <!-- ====== 🎯 任务 视图 ====== -->
+    <div class="view-panel" id="view-tasks">
+
+      <div class="card">
+        <!-- 分类标签栏 -->
+        <div class="cat-tabs-wrap" id="catTabsWrap">
+          <!-- 动态渲染 -->
+        </div>
+
+        <!-- 赚取任务 -->
+        <div class="task-section-label">🌱 赚取积分</div>
+        <div class="task-buttons" id="taskEarnList">
+          <!-- 动态渲染 -->
+        </div>
+
+        <!-- 扣除任务 -->
+        <div class="task-section-label" style="margin-top:6px;">⚠️ 扣除积分</div>
+        <div class="task-buttons" id="taskSpendList">
+          <!-- 动态渲染 -->
+        </div>
+
+        <!-- 新建任务 -->
+        <button class="btn-new-task" id="btnNewTask" onclick="toggleTaskForm()">＋ 新建任务</button>
+        <div class="task-form-wrap" id="taskFormWrap">
+          <div class="task-form-inner">
+            <input type="text" id="customName" placeholder="任务名称" maxlength="20">
+            <input type="number" id="customPts" placeholder="分值" value="5" min="1" max="99">
+            <select id="customType">
+              <option value="earn">🌱 赚积分</option>
+              <option value="spend">⚠️ 扣积分</option>
+            </select>
+            <select id="customCategory">
+              <!-- 动态渲染 -->
+            </select>
+            <button class="btn-submit-task" onclick="submitTask()" id="btnSubmitTask">＋ 添加任务</button>
+            <button class="btn-cancel-edit" id="btnCancelEdit" onclick="cancelEditTask()" style="display:none;">取消编辑</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tasks -->
+
+    <!-- ====== 🛍️ 账本 视图 ====== -->
+    <div class="view-panel" id="view-ledger">
+
+      <!-- 愿望兑换商店 -->
+      <div class="card exchange">
+        <div class="card-title">🎁 愿望兑换商店</div>
+        <div class="task-buttons" id="exchangeButtons">
+          <!-- 动态渲染 -->
+        </div>
+
+        <!-- 兑换商品新建/编辑表单 -->
+        <button class="btn-new-task" id="btnNewExchange" onclick="toggleExchangeForm()">＋ 添加兑换商品</button>
+        <div class="task-form-wrap" id="exchangeFormWrap">
+          <div class="task-form-inner">
+            <input type="text" id="exchangeName" placeholder="商品名称" maxlength="15">
+            <input type="number" id="exchangeCost" placeholder="所需积分" value="10" min="1" max="999">
+            <input type="text" id="exchangeEmoji" placeholder="🎁" maxlength="2" style="max-width:56px;text-align:center;">
+            <button class="btn-submit-task" onclick="submitExchangeItem()" id="btnSubmitExchange">＋ 添加</button>
+            <button class="btn-cancel-edit" onclick="cancelExchangeEdit()" id="btnCancelExchange" style="display:none;">取消编辑</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 打卡流水 -->
+      <div class="card">
+        <div class="card-title">📋 打卡与兑换历史流水</div>
+        <ul class="log" id="logList">
+          <li class="empty">暂无记录，快去完成第一个任务吧 ✨</li>
+        </ul>
+      </div>
+
+      <!-- 历史发票存档 -->
+      <div class="card history" id="historyCard">
+        <h2 class="history-toggle" onclick="toggleHistory()">
+          <span><span>📜</span> 历史发票存档</span>
+          <span class="arrow" id="historyArrow">▼</span>
+        </h2>
+        <div class="history-body">
+          <div class="history-list" id="historyList">
+            <div class="hi-empty">暂无存档发票，点击「💾 存档并清空今日流水」开始存档吧 ✨</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /ledger -->
+
+  </div><!-- /view-container -->
+
+</div><!-- /container -->
+
+<!-- 确认弹窗 -->
+<div class="overlay" id="resetOverlay">
+  <div class="dialog">
+    <div class="dialog-icon">⚠️</div>
+    <p><strong>确定要重置所有数据吗？</strong></p>
+    <p style="font-size:13px;color:#8A9B92;">积分、历史记录、自定义任务、发票存档将全部清空，且无法恢复。</p>
+    <div class="dialog-actions">
+      <button class="btn-cancel" onclick="hideResetDialog()">取消</button>
+      <button class="btn-confirm" onclick="doReset()">确认重置</button>
+    </div>
+  </div>
+</div>
+
+<!-- 分类管理弹窗 -->
+<div class="overlay" id="catMgmtOverlay">
+  <div class="dialog">
+    <div class="dialog-icon">⚙️</div>
+    <p><strong>管理分类</strong></p>
+    <div class="cat-mgmt-list" id="catMgmtList">
+      <!-- 动态渲染 -->
+    </div>
+    <div class="cat-mgmt-add">
+      <input type="text" class="emoji-input" id="newCatEmoji" placeholder="😊" maxlength="2">
+      <input type="text" class="name-input" id="newCatName" placeholder="分类名称" maxlength="10">
+      <button onclick="addCategory()">＋ 添加</button>
+    </div>
+    <div class="dialog-actions" style="margin-top:14px;">
+      <button class="btn-cancel" onclick="closeCatMgmt()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 发票弹窗 -->
+<div class="overlay receipt-overlay" id="receiptOverlay" onclick="if(event.target===this)closeReceipt()">
+  <div class="receipt-wrap" id="receiptWrap">
+    <div class="receipt-paper" id="receiptPaper"></div>
+    <div class="receipt-modal-actions" id="receiptActions">
+      <button class="btn-dl-receipt" onclick="downloadReceipt()" title="保存为图片分享到朋友圈">
+        🖼️ 下载小票图片
+      </button>
+      <button class="btn-close-receipt" onclick="closeReceipt()">✕ 关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 历史发票查看弹窗 -->
+<div class="overlay history-receipt-overlay" id="historyReceiptOverlay" onclick="if(event.target===this)closeHistoryReceipt()">
+  <div class="receipt-wrap">
+    <div class="receipt-paper" id="historyReceiptPaper"></div>
+    <div class="receipt-modal-actions">
+      <button class="btn-dl-receipt" onclick="downloadHistoryReceipt()" title="保存为图片分享到朋友圈">
+        🖼️ 下载小票图片
+      </button>
+      <button class="btn-close-receipt" onclick="closeHistoryReceipt()">✕ 关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 浮动提示 -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ============ 常量 & 全局数据 ============
+const DAILY_LIMIT = 15;
+
+// ===== 🔗 Supabase 云端同步系统 =====
+// 你的 Supabase 项目 URL 和公开密钥（匿名访问密钥）
+const SUPABASE_URL = "https://edqtauxrwggyhecywoxw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_MtRIB6g08aCLkZTWoZnZRw_6t3IW-Gl";
+
+// 初始化 Supabase 客户端（加安全检查，SDK 加载失败时不影响本地使用）
+let supabaseClient = null;
+try {
+  if (typeof window.supabase === "undefined" || !window.supabase.createClient) {
+    console.error("❌ Supabase SDK 未加载成功！请检查网络连接，或尝试按 Ctrl+F5 强制刷新。");
+    console.error("   → 错误详情：window.supabase 不存在，云端同步功能暂时不可用");
+  } else {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log("✅ Supabase 客户端初始化成功，云端同步已就绪");
+  }
+} catch (err) {
+  console.error("❌ Supabase 初始化失败：", err.message);
+  console.error("   → 请检查 SUPABASE_URL 和 SUPABASE_KEY 是否正确");
+}
+
+// 云端写入防抖定时器（避免频繁请求）
+let _cloudSaveTimer = null;
+
+/**
+ * ========== 核心函数1：把网页所有数据打包成一个 JSON 对象 ==========
+ * 这个对象包含了网页的全部核心状态，序列化后存到云端
+ */
+function buildStateSnapshot() {
+  return {
+    totalPoints: totalPoints,
+    dailyDeducted: dailyDeducted,
+    dailyDate: dailyDate,
+    customTasks: customTasks,
+    receipts: receipts,
+    deletedPresets: deletedPresets,
+    categories: categories,
+    goals: goals,
+    bookmarkedExchange: bookmarkedExchange,
+    activeCategory: activeCategory,
+  };
+}
+
+/**
+ * ========== 核心函数2：从 JSON 对象恢复网页的所有状态 ==========
+ * 云端读取成功后，调用这个函数把数据还原到网页变量中
+ */
+function restoreStateFromSnapshot(snapshot) {
+  if (snapshot.totalPoints !== undefined) totalPoints = snapshot.totalPoints;
+  if (snapshot.dailyDeducted !== undefined) dailyDeducted = snapshot.dailyDeducted;
+  if (snapshot.dailyDate !== undefined) dailyDate = snapshot.dailyDate;
+  if (snapshot.customTasks !== undefined) customTasks = snapshot.customTasks;
+  if (snapshot.receipts !== undefined) receipts = snapshot.receipts;
+  if (snapshot.deletedPresets !== undefined) deletedPresets = snapshot.deletedPresets;
+  if (snapshot.categories !== undefined) categories = snapshot.categories;
+  if (snapshot.goals !== undefined) goals = snapshot.goals;
+  if (snapshot.bookmarkedExchange !== undefined) bookmarkedExchange = snapshot.bookmarkedExchange;
+  if (snapshot.activeCategory !== undefined) activeCategory = snapshot.activeCategory;
+}
+
+/**
+ * ========== 核心函数3：从云端加载数据 ==========
+ * 网页打开时调用。从 Supabase 的 app_state 表读取 id='main_user' 的数据
+ * 成功 → 用云端数据覆盖本地；失败 → 保留 localStorage 的数据
+ */
+async function loadStateFromCloud() {
+  if (!supabaseClient) { console.warn("⚠️ Supabase 未初始化，跳过云端读取"); return; }
+  try {
+    const { data, error } = await supabaseClient
+      .from("app_state")
+      .select("content")
+      .eq("id", "main_user")
+      .maybeSingle();   // 可能不存在（首次使用时表是空的）
+
+    if (error) {
+      console.warn("⚠️ 从云端读取失败：", error.message);
+      return; // 读取失败，降级使用 localStorage 数据
+    }
+
+    if (data && data.content) {
+      // 云端有数据 → 解析 JSON 并恢复所有状态
+      const snapshot = JSON.parse(data.content);
+      restoreStateFromSnapshot(snapshot);
+
+      // 同步写入 localStorage（确保离线时也能用）
+      saveAllToLocal();
+      console.log("✅ 已从云端恢复数据（积分：" + totalPoints + "）");
+    } else {
+      // 云端还没有数据（首次使用）→ 把当前 localStorage 数据上传到云端
+      console.log("ℹ️ 云端暂无数据，将本地数据上传到云端");
+      saveStateToCloud();
+    }
+  } catch (err) {
+    console.warn("⚠️ 云端同步异常：", err.message);
+  }
+}
+
+/**
+ * ========== 核心函数4：向云端写入数据 ==========
+ * 把当前网页的所有状态打包成 JSON，upsert 到 app_state 表
+ * upsert = 如果 id='main_user' 的行存在就更新，不存在就新建
+ */
+async function saveStateToCloud() {
+  if (!supabaseClient) { console.warn("⚠️ Supabase 未初始化，跳过云端写入"); return; }
+  try {
+    const content = JSON.stringify(buildStateSnapshot());
+    const { error } = await supabaseClient
+      .from("app_state")
+      .upsert(
+        { id: "main_user", content: content, updated_at: new Date().toISOString() },
+        { onConflict: "id" }   // 主键冲突时更新，而不是报错
+      );
+
+    if (error) {
+      console.error("⚠️ 写入云端失败！");
+      console.error("   错误码：" + (error.code || "无"));
+      console.error("   错误信息：" + error.message);
+      console.error("   详细信息：" + (error.details || "无"));
+      console.error("   提示：" + (error.hint || "无"));
+      // 常见问题检测
+      if (error.code === "42P01") {
+        console.error("   💡 问题：app_state 表不存在！请在 Supabase SQL Editor 中执行 CREATE TABLE 语句");
+      } else if (error.code === "42501" || error.message.includes("permission")) {
+        console.error("   💡 问题：权限不足！请在 Supabase SQL Editor 中执行 RLS Policy 语句");
+      } else if (error.code === "401" || error.message.includes("JWT") || error.message.includes("API key")) {
+        console.error("   💡 问题：API 密钥无效！请检查 SUPABASE_KEY 是否完整正确");
+      }
+    } else {
+      console.log("✅ 已同步到云端（积分：" + totalPoints + "）");
+    }
+  } catch (err) {
+    console.error("⚠️ 云端写入异常：", err.message);
+    console.error("   → 可能是网络问题，或 Supabase 项目地址/密钥填写错误");
+  }
+}
+
+/**
+ * ========== 核心函数5：防抖触发云端保存 ==========
+ * 数据变动时调用这个函数，它不会立刻写云端
+ * 而是等 2 秒，如果 2 秒内没有新变动，再一次性写入
+ */
+function scheduleCloudSave() {
+  clearTimeout(_cloudSaveTimer);
+  _cloudSaveTimer = setTimeout(() => {
+    saveStateToCloud();
+  }, 2000); // 2 秒防抖
+}
+
+/**
+ * ========== 辅助函数：把所有数据写入 localStorage ==========
+ * 云端恢复数据后，同步更新本地存储
+ */
+function saveAllToLocal() {
+  savePoints();
+  saveDailyData();
+  saveCustomTasks();
+  saveDeletedPresets();
+  saveReceipts();
+  saveCategories();
+  saveGoals();
+  saveBookmarks();
+}
+
+// ====== 预设任务定义 ======
+const PRESET_TASKS = [
+  { id: 'preset_earn_study',    emoji: '📖', name: '沉浸学习45分钟', pts:  2, type: 'earn',     categoryId: 'cat_study' },
+  { id: 'preset_earn_paper',    emoji: '✍️', name: '写论文1000字',    pts:  5, type: 'earn',     categoryId: 'cat_study' },
+  { id: 'preset_earn_sleep',    emoji: '😴', name: '早睡',            pts:  3, type: 'earn',     categoryId: 'cat_health' },
+  { id: 'preset_spend_late',    emoji: '🦉', name: '熬夜',            pts: -3, type: 'spend',    categoryId: 'cat_health' },
+  { id: 'preset_spend_video',   emoji: '📱', name: '刷短视频超标',    pts: -2, type: 'spend',    categoryId: 'cat_life' },
+  { id: 'preset_exchange_milktea',  emoji: '🧋', name: '兑换一杯奶茶',     cost: 10, type: 'exchange' },
+  { id: 'preset_exchange_movie',    emoji: '🎬', name: '看一场电影',       cost: 30, type: 'exchange' },
+  { id: 'preset_exchange_badminton',emoji: '🏸', name: '羽毛球装备更新',   cost: 50, type: 'exchange' },
+];
+
+// ====== 默认分类 ======
+const DEFAULT_CATEGORIES = [
+  { id: 'cat_all',   emoji: '📋', name: '全部' },
+  { id: 'cat_study', emoji: '📚', name: '学习' },
+  { id: 'cat_life',  emoji: '🏠', name: '生活' },
+  { id: 'cat_health',emoji: '💪', name: '健康' },
+];
+
+let totalPoints = 0;
+let dailyDeducted = 0;
+let dailyDate = "";
+let customTasks = [];
+let receipts = [];
+let deletedPresets = [];
+let categories = [];
+let activeCategory = 'cat_all';
+let goals = [];
+let editingGoalId = null;
+let currentView = 'dashboard';
+let taskFormOpen = false;
+let editingTaskId = null;
+let bookmarkedExchange = [];
+let exchangeFormOpen = false;
+let editingExchangeId = null;
+
+const RECEIPT_QUOTES = [
+  "感谢您今日的付出与自律！系统已自动存档。",
+  "每一分努力都值得记录，明天继续加油！✨",
+  "自律即自由，今天的你比昨天更优秀！",
+  "积少成多，聚沙成塔，坚持就是胜利！💪",
+  "生活不会辜负每一个认真的人，晚安！🌙",
+  "今天的汗水是明天成功的种子！🌟",
+  "记录这一刻，见证成长的每一步！📝",
+  "优秀是一种习惯，你已经做得很棒了！🎉",
+  "不积跬步，无以至千里；不积小流，无以成江海。",
+  "你的每一次选择，都在塑造未来的自己。🌈",
+  "种一棵树最好的时间是十年前，其次是现在。",
+  "凡是过往，皆为序章。明天更精彩！📖",
+];
+
+// ============ DOM 引用 ============
+const pointsDisplay  = document.getElementById("pointsDisplay");
+const scoreboard     = document.getElementById("scoreboard");
+const toastEl        = document.getElementById("toast");
+const logList        = document.getElementById("logList");
+const resetOverlay   = document.getElementById("resetOverlay");
+const dailyBarInner  = document.getElementById("dailyBarInner");
+const dailyBarLabel  = document.getElementById("dailyBarLabel");
+const dailyBarStatus = document.getElementById("dailyBarStatus");
+const receiptOverlay = document.getElementById("receiptOverlay");
+const receiptPaper   = document.getElementById("receiptPaper");
+const receiptWrap    = document.getElementById("receiptWrap");
+const receiptActions = document.getElementById("receiptActions");
+const historyReceiptOverlay = document.getElementById("historyReceiptOverlay");
+const historyReceiptPaper   = document.getElementById("historyReceiptPaper");
+const historyList    = document.getElementById("historyList");
+const historyCard    = document.getElementById("historyCard");
+const printerBar     = document.getElementById("printerBar");
+const printerStatus  = document.getElementById("printerStatus");
+const segSlider      = document.getElementById("segSlider");
+const catTabsWrap    = document.getElementById("catTabsWrap");
+const taskEarnList   = document.getElementById("taskEarnList");
+const taskSpendList  = document.getElementById("taskSpendList");
+const exchangeBtns   = document.getElementById("exchangeButtons");
+const goalList       = document.getElementById("goalList");
+const goalEmpty      = document.getElementById("goalEmpty");
+const goalSetForm    = document.getElementById("goalSetForm");
+const goalSubmitBtn  = document.getElementById("goalSubmitBtn");
+const btnSubmitTask  = document.getElementById("btnSubmitTask");
+const btnCancelEdit  = document.getElementById("btnCancelEdit");
+const catMgmtOverlay = document.getElementById("catMgmtOverlay");
+const catMgmtList    = document.getElementById("catMgmtList");
+const taskFormWrap   = document.getElementById("taskFormWrap");
+let currentViewingReceiptId = null;
+let isTearing = false;
+let tearStartY = 0;
+let tearOffset = 0;
+
+// ============ 🔊 音效引擎 ============
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx) {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  }
+  return _audioCtx;
+}
+
+function playSound(type) {
+  try {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+
+    switch (type) {
+      case 'coin':
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1400, t);
+        osc.frequency.exponentialRampToValueAtTime(700, t + 0.12);
+        gain.gain.setValueAtTime(0.12, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+        osc.start(t); osc.stop(t + 0.15);
+        break;
+      case 'stamp':
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(90, t);
+        osc.frequency.exponentialRampToValueAtTime(35, t + 0.18);
+        gain.gain.setValueAtTime(0.18, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+        osc.start(t); osc.stop(t + 0.2);
+        break;
+      case 'tick':
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(700, t);
+        gain.gain.setValueAtTime(0.04, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
+        osc.start(t); osc.stop(t + 0.03);
+        break;
+      case 'tear':
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(250, t);
+        osc.frequency.exponentialRampToValueAtTime(60, t + 0.25);
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+        osc.start(t); osc.stop(t + 0.28);
+        const o2 = ctx.createOscillator();
+        const g2 = ctx.createGain();
+        o2.connect(g2); g2.connect(ctx.destination);
+        o2.type = 'triangle';
+        o2.frequency.setValueAtTime(400, t);
+        o2.frequency.exponentialRampToValueAtTime(100, t + 0.2);
+        g2.gain.setValueAtTime(0.06, t);
+        g2.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+        o2.start(t); o2.stop(t + 0.2);
+        break;
+    }
+  } catch(e) {}
+}
+
+// ============ 日期 / 熔断 ============
+function getTodayStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function getNowTimeStr() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") + ":" + String(d.getSeconds()).padStart(2, "0");
+}
+function getNowChinese() {
+  const d = new Date();
+  return d.getFullYear() + "年" + (d.getMonth() + 1) + "月" + d.getDate() + "日  " + getNowTimeStr();
+}
+
+function checkNewDay() {
+  const today = getTodayStr();
+  if (dailyDate !== today) { dailyDate = today; dailyDeducted = 0; saveDailyData(); updateDailyBar(); }
+}
+function loadDailyData() {
+  try {
+    const sd = localStorage.getItem("my_points_daily_date");
+    const dd = localStorage.getItem("my_points_daily_deducted");
+    const today = getTodayStr();
+    if (sd === today && dd !== null) { dailyDate = sd; dailyDeducted = parseInt(dd, 10) || 0; }
+    else { dailyDate = today; dailyDeducted = 0; }
+  } catch (e) { dailyDate = getTodayStr(); dailyDeducted = 0; }
+}
+function saveDailyData() {
+  try { localStorage.setItem("my_points_daily_date", dailyDate); localStorage.setItem("my_points_daily_deducted", dailyDeducted); } catch (e) {}
+  scheduleCloudSave();
+}
+
+function updateDailyBar() {
+  checkNewDay();
+  const pct = Math.min(100, Math.round((dailyDeducted / DAILY_LIMIT) * 100));
+  dailyBarInner.style.width = pct + "%";
+  dailyBarLabel.textContent = dailyDeducted;
+  dailyBarInner.classList.remove("safe", "warn", "full");
+  dailyBarStatus.textContent = "";
+  if (dailyDeducted >= DAILY_LIMIT) {
+    dailyBarInner.classList.add("full"); dailyBarStatus.textContent = "🔒 已熔断";
+  } else if (dailyDeducted >= 10) {
+    dailyBarInner.classList.add("warn"); dailyBarStatus.textContent = "⚡ 接近上限";
+  } else { dailyBarInner.classList.add("safe"); }
+}
+
+function canDeduct(amount) {
+  checkNewDay();
+  const abs = Math.abs(amount);
+  if (dailyDeducted + abs > DAILY_LIMIT) return { allowed: false, remaining: DAILY_LIMIT - dailyDeducted };
+  return { allowed: true, remaining: DAILY_LIMIT - dailyDeducted - abs };
+}
+
+// ============ 🪙 投币 & 🏷️ 盖章 ============
+function handleEarn(delta, label, btnEl) {
+  if (!btnEl) btnEl = window.event && window.event.currentTarget;
+  addRipple({ currentTarget: btnEl });
+  spawnCoin(delta, btnEl, () => {
+    stampButton(btnEl);
+    addPoints(delta, label);
+  });
+}
+
+function spawnCoin(delta, btnEl, onComplete) {
+  const btnRect = btnEl.getBoundingClientRect();
+  const scoreRect = pointsDisplay.getBoundingClientRect();
+  const startX = btnRect.left + btnRect.width / 2 - 23;
+  const startY = btnRect.top;
+  const endX = scoreRect.left + scoreRect.width / 2 - 23;
+  const endY = scoreRect.top + scoreRect.height / 2 - 23;
+
+  const coin = document.createElement("div");
+  coin.className = "coin spin";
+  coin.textContent = "+" + delta;
+  coin.style.left = startX + "px";
+  coin.style.top = startY + "px";
+  document.body.appendChild(coin);
+  playSound("coin");
+
+  const duration = 580;
+  const start = performance.now();
+  const peakH = -90;
+
+  function animate(now) {
+    const elapsed = now - start;
+    const t = Math.min(elapsed / duration, 1);
+    const ease = 1 - Math.pow(1 - t, 2.5);
+    const x = startX + (endX - startX) * ease;
+    const y = startY + (endY - startY) * ease + peakH * 4 * t * (1 - t);
+    coin.style.left = x + "px";
+    coin.style.top = y + "px";
+    coin.style.opacity = t > 0.75 ? 1 - (t - 0.75) / 0.25 : 1;
+    if (t < 1) { requestAnimationFrame(animate); }
+    else {
+      coin.remove();
+      vaultSpark(endX + 23, endY + 23);
+      scoreboard.classList.add("vault-glow");
+      setTimeout(() => scoreboard.classList.remove("vault-glow"), 500);
+      if (onComplete) onComplete();
+    }
+  }
+  requestAnimationFrame(animate);
+}
+
+function vaultSpark(cx, cy) {
+  const emojis = ["✨","🌟","💫","⭐","🪙"];
+  for (let i = 0; i < 8; i++) {
+    const s = document.createElement("span");
+    s.className = "vault-spark";
+    s.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+    s.style.left = cx + "px"; s.style.top = cy + "px";
+    const angle = (Math.PI * 2 * i) / 8;
+    const dist = 30 + Math.random() * 50;
+    s.style.setProperty("--sx", Math.cos(angle) * dist + "px");
+    s.style.setProperty("--sy", Math.sin(angle) * dist - 15 + "px");
+    document.body.appendChild(s);
+    s.addEventListener("animationend", () => s.remove());
+  }
+}
+
+function stampButton(btnEl) {
+  const stamp = document.createElement("div");
+  stamp.className = "stamp-effect";
+  stamp.textContent = "COMPLETED ✓";
+  btnEl.appendChild(stamp);
+  playSound("stamp");
+  stamp.addEventListener("animationend", () => stamp.remove());
+}
+
+// ============ UI 特效 ============
+function addRipple(e) {
+  const btn = e.currentTarget;
+  const ripple = document.createElement("span");
+  ripple.className = "ripple";
+  const rect = btn.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height);
+  ripple.style.width = ripple.style.height = size + "px";
+  ripple.style.left = (e.clientX - rect.left - size / 2) + "px";
+  ripple.style.top  = (e.clientY - rect.top  - size / 2) + "px";
+  btn.appendChild(ripple);
+  ripple.addEventListener("animationend", () => ripple.remove());
+}
+
+function spawnParticles(x, y, emojis) {
+  for (let i = 0; i < 8; i++) {
+    const p = document.createElement("span");
+    p.className = "particle";
+    p.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+    p.style.left = x + "px"; p.style.top  = y + "px";
+    const angle = (Math.PI * 2 * i) / 8 + (Math.random() - 0.5) * 0.6;
+    const dist = 40 + Math.random() * 60;
+    p.style.setProperty("--dx", Math.cos(angle) * dist + "px");
+    p.style.setProperty("--dy", Math.sin(angle) * dist - 25 + "px");
+    document.body.appendChild(p);
+    p.addEventListener("animationend", () => p.remove());
+  }
+}
+
+function showToast(msg, type) {
+  toastEl.textContent = msg;
+  toastEl.className = "toast " + (type || "");
+  toastEl.classList.add("show");
+  clearTimeout(toastEl._timeout);
+  toastEl._timeout = setTimeout(() => toastEl.classList.remove("show"), 2200);
+}
+
+function addLog(label, delta, extraClass) {
+  const empty = logList.querySelector(".empty");
+  if (empty) empty.remove();
+  const sign = delta > 0 ? "+" : "";
+  const cssClass = extraClass || (delta > 0 ? "earn-log" : "spend-log");
+  const timeStr = getNowTimeStr();
+  const todayStr = getTodayStr();
+  const li = document.createElement("li");
+  li.className = cssClass;
+  li.dataset.date = todayStr;
+  li.dataset.label = label;
+  li.dataset.delta = delta;
+  li.innerHTML = `<span>${escapeHtml(label)}  ${sign}${delta} 分</span><span class="time">${timeStr}</span>`;
+  logList.prepend(li);
+  while (logList.children.length > 50) logList.removeChild(logList.lastChild);
+}
+
+// ============ 积分操作 ============
+function addPoints(delta, label) {
+  checkNewDay();
+  if (delta < 0) {
+    const check = canDeduct(delta);
+    if (!check.allowed) {
+      showToast("🔒 今天已触发熔断保护，好好休息，明天重置！", "err");
+      addLog("🚫 熔断：" + label, delta, "blocked-log");
+      pointsDisplay.classList.add("shake");
+      setTimeout(() => pointsDisplay.classList.remove("shake"), 400);
+      return;
+    }
+    dailyDeducted += Math.abs(delta);
+    saveDailyData();
+    updateDailyBar();
+  }
+
+  totalPoints += delta;
+  pointsDisplay.textContent = totalPoints;
+
+  pointsDisplay.classList.remove("bump", "earned", "spent");
+  void pointsDisplay.offsetWidth;
+  pointsDisplay.classList.add("bump");
+  if (delta > 0) { pointsDisplay.classList.add("earned"); }
+  else {
+    pointsDisplay.classList.add("spent");
+    const rect = pointsDisplay.getBoundingClientRect();
+    spawnParticles(rect.left + rect.width / 2, rect.top + rect.height / 2, ["💨","⚠️","📉"]);
+  }
+  setTimeout(() => pointsDisplay.classList.remove("bump", "earned", "spent"), 350);
+
+  const verb = delta > 0 ? "完成" : "记录";
+  showToast("✅ " + verb + "：" + label + "  " + (delta > 0 ? "+" : "") + delta + " 分", delta > 0 ? "ok" : "");
+  addLog(label, delta);
+  saveAll();
+  refreshExchangeButtons();
+  refreshSpendButtons();
+  updateDashboardSummary();
+  updateGoalBars();
+}
+
+function exchangePoints(cost, rewardName) {
+  checkNewDay();
+  if (totalPoints < cost) {
+    showToast("❌ 积分不足，继续加油！", "err");
+    pointsDisplay.classList.add("shake");
+    setTimeout(() => pointsDisplay.classList.remove("shake"), 400);
+    return;
+  }
+  // 兑换商店不触发熔断，直接扣积分即可（熔断仅限惩罚性扣分行为）
+
+  totalPoints -= cost;
+  pointsDisplay.textContent = totalPoints;
+  pointsDisplay.classList.remove("bump", "spent");
+  void pointsDisplay.offsetWidth;
+  pointsDisplay.classList.add("bump", "spent");
+  setTimeout(() => pointsDisplay.classList.remove("bump", "spent"), 350);
+
+  showToast("🎉 兑换成功！" + rewardName + "  −" + cost + " 分", "ok");
+  addLog("[兑换]" + rewardName, -cost);
+  saveAll();
+  refreshExchangeButtons();
+  refreshSpendButtons();
+  updateDashboardSummary();
+  updateGoalBars();
+}
+function refreshExchangeButtons() {
+  document.querySelectorAll("#exchangeButtons .btn-exchange").forEach(btn => {
+    const cost = parseInt(btn.dataset.cost);
+    if (!isNaN(cost)) {
+      // 兑换商店不受熔断影响，仅检查积分是否足够
+      btn.classList.toggle("locked", totalPoints < cost);
+    }
+  });
+}
+
+function refreshSpendButtons() {
+  checkNewDay();
+  const blocked = dailyDeducted >= DAILY_LIMIT;
+  document.querySelectorAll("#taskSpendList .btn-spend").forEach(btn => {
+    btn.classList.toggle("blocked", blocked);
+  });
+  // 兑换商店不受熔断影响，不需要额外锁定
+}
+
+// ============ 🏠 视图切换 ============
+function switchView(viewName) {
+  const currentPanel = document.querySelector('.view-panel.active');
+  const targetPanel = document.getElementById('view-' + viewName);
+  if (!targetPanel || currentPanel === targetPanel) return;
+
+  // 更新分段按钮
+  document.querySelectorAll('.segment').forEach(seg => {
+    seg.classList.toggle('active', seg.dataset.view === viewName);
+  });
+  updateSegSlider(viewName);
+
+  currentView = viewName;
+  try { sessionStorage.setItem('my_points_current_view', viewName); } catch(e) {}
+
+  if (currentPanel) {
+    currentPanel.style.opacity = '0';
+    const onTransitionEnd = () => {
+      currentPanel.removeEventListener('transitionend', onTransitionEnd);
+      currentPanel.classList.remove('active');
+      currentPanel.style.display = 'none';
+      targetPanel.style.display = '';
+      targetPanel.classList.add('active');
+      void targetPanel.offsetHeight;
+      targetPanel.style.opacity = '1';
+    };
+    currentPanel.addEventListener('transitionend', onTransitionEnd);
+  } else {
+    targetPanel.style.display = '';
+    targetPanel.classList.add('active');
+    void targetPanel.offsetHeight;
+    targetPanel.style.opacity = '1';
+  }
+}
+
+function updateSegSlider(viewName) {
+  const idx = ['dashboard', 'tasks', 'ledger'].indexOf(viewName || currentView);
+  segSlider.style.transform = 'translateX(' + (idx * 100) + '%)';
+}
+
+// ============ 🎯 分类系统 ============
+function initCategories() {
+  loadCategories();
+  if (categories.length === 0) {
+    categories = DEFAULT_CATEGORIES.map(c => ({...c}));
+    saveCategories();
+  }
+}
+
+function loadCategories() {
+  try {
+    const raw = localStorage.getItem("my_points_categories");
+    if (raw) { categories = JSON.parse(raw); }
+  } catch(e) { categories = []; }
+}
+
+function saveCategories() {
+  try { localStorage.setItem("my_points_categories", JSON.stringify(categories)); } catch(e) {}
+  scheduleCloudSave();
+}
+
+function addCategory() {
+  const emojiInput = document.getElementById("newCatEmoji");
+  const nameInput = document.getElementById("newCatName");
+  const emoji = emojiInput.value.trim() || "📌";
+  const name = nameInput.value.trim();
+  if (!name) { showToast("请输入分类名称", "err"); return; }
+  if (categories.some(c => c.name === name)) { showToast("分类名称已存在", "warn"); return; }
+
+  const newCat = { id: "cat_" + Date.now(), emoji: emoji, name: name };
+  categories.push(newCat);
+  saveCategories();
+  renderCategoryTabs();
+  renderCatMgmtList();
+  renderTaskCards(activeCategory);
+  renderCategorySelect();
+  emojiInput.value = ""; nameInput.value = "";
+  showToast("✅ 分类「" + name + "」已添加", "ok");
+}
+
+function deleteCategory(catId) {
+  if (catId === 'cat_all') { showToast("不能删除「全部」分类", "warn"); return; }
+  const cat = categories.find(c => c.id === catId);
+  if (!cat) return;
+  // 将该分类下的自定义任务移到 cat_all
+  customTasks.forEach(t => { if ((t.categoryId || 'cat_all') === catId) t.categoryId = 'cat_all'; });
+  categories = categories.filter(c => c.id !== catId);
+  saveCategories();
+  saveCustomTasks();
+  if (activeCategory === catId) { activeCategory = 'cat_all'; }
+  renderCategoryTabs();
+  renderCatMgmtList();
+  renderTaskCards(activeCategory);
+  renderCategorySelect();
+  showToast("🗑️ 分类「" + cat.name + "」已删除");
+}
+
+function openCatMgmt() {
+  renderCatMgmtList();
+  catMgmtOverlay.classList.add("show");
+}
+
+function closeCatMgmt() {
+  catMgmtOverlay.classList.remove("show");
+}
+
+function renderCatMgmtList() {
+  catMgmtList.innerHTML = "";
+  const displayCats = categories.filter(c => c.id !== 'cat_all');
+  if (displayCats.length === 0) {
+    catMgmtList.innerHTML = '<div class="cat-mgmt-empty">暂无自定义分类</div>';
+  } else {
+    displayCats.forEach(cat => {
+      const item = document.createElement("div");
+      item.className = "cat-mgmt-item";
+      item.innerHTML = `
+        <span class="cat-mgmt-emoji">${cat.emoji}</span>
+        <span class="cat-mgmt-name">${escapeHtml(cat.name)}</span>
+        <button class="btn-cat-del" title="删除分类" onclick="deleteCategory('${cat.id}')">×</button>
+      `;
+      catMgmtList.appendChild(item);
+    });
+  }
+}
+
+function renderCategoryTabs() {
+  catTabsWrap.innerHTML = "";
+  categories.forEach(cat => {
+    const tab = document.createElement("button");
+    tab.className = "cat-tab" + (cat.id === activeCategory ? " active" : "");
+    tab.textContent = cat.emoji + " " + cat.name;
+    tab.onclick = () => { activeCategory = cat.id; renderCategoryTabs(); renderTaskCards(activeCategory); };
+    catTabsWrap.appendChild(tab);
+  });
+
+  const mgmtBtn = document.createElement("button");
+  mgmtBtn.className = "btn-manage-cats";
+  mgmtBtn.textContent = "⚙️";
+  mgmtBtn.title = "管理分类";
+  mgmtBtn.onclick = openCatMgmt;
+  catTabsWrap.appendChild(mgmtBtn);
+}
+
+function renderCategorySelect() {
+  const sel = document.getElementById("customCategory");
+  if (!sel) return;
+  sel.innerHTML = "";
+  categories.forEach(cat => {
+    const opt = document.createElement("option");
+    opt.value = cat.id;
+    opt.textContent = cat.emoji + " " + cat.name;
+    if (cat.id === activeCategory && cat.id !== 'cat_all') opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// ============ 🎯 任务卡片渲染 ============
+function renderAllTaskCards() {
+  renderTaskCards(activeCategory);
+}
+
+function renderTaskCards(categoryId) {
+  taskEarnList.innerHTML = "";
+  taskSpendList.innerHTML = "";
+
+  // 收集所有 earn/spend 任务
+  const allTasks = [];
+
+  // 预设任务
+  PRESET_TASKS.forEach(p => {
+    if (p.type === 'exchange') return;
+    if (deletedPresets.includes(p.id)) return;
+    allTasks.push({...p, isPreset: true});
+  });
+
+  // 自定义任务
+  customTasks.forEach(t => {
+    if (t.type === 'exchange') return;
+    allTasks.push({
+      id: t.id,
+      emoji: '📌',
+      name: t.name,
+      pts: t.pts,
+      type: t.pts > 0 ? 'earn' : 'spend',
+      categoryId: t.categoryId || 'cat_all',
+      isPreset: false,
+    });
+  });
+
+  // 按分类筛选
+  const filtered = categoryId === 'cat_all' ? allTasks : allTasks.filter(t => t.categoryId === categoryId);
+
+  // 渲染赚取任务
+  const earnTasks = filtered.filter(t => t.pts > 0);
+  if (earnTasks.length === 0) {
+    taskEarnList.innerHTML = '<div style="text-align:center;color:#C5CFC2;padding:10px 0;font-size:13px;">此分类暂无赚取任务</div>';
+  } else {
+    earnTasks.forEach(t => renderTaskButton(t, taskEarnList));
+  }
+
+  // 渲染扣除任务
+  const spendTasks = filtered.filter(t => t.pts < 0);
+  if (spendTasks.length === 0) {
+    taskSpendList.innerHTML = '<div style="text-align:center;color:#C5CFC2;padding:10px 0;font-size:13px;">此分类暂无扣除任务</div>';
+  } else {
+    spendTasks.forEach(t => renderTaskButton(t, taskSpendList));
+  }
+
+  refreshSpendButtons();
+}
+
+function renderTaskButton(task, container) {
+  const absPts = Math.abs(task.pts);
+  const sign = task.pts > 0 ? "+" : "−";
+  const btnClass = task.pts > 0 ? "btn-earn" : "btn-spend";
+
+  const btn = document.createElement("button");
+  btn.className = "btn " + btnClass;
+  btn.id = task.id;
+  if (task.isPreset) {
+    btn.dataset.presetId = task.id;
+  } else {
+    btn.dataset.custom = "1";
+  }
+  btn.innerHTML = `
+    <span class="name"><span class="icon">${task.emoji}</span> ${escapeHtml(task.name)}</span>
+    <span class="badge">${sign}${absPts} 分</span>
+    ${task.isPreset ? '' : '<span class="edit-task" title="编辑">✎</span>'}
+    <span class="del-task" title="删除">×</span>
+  `;
+
+  if (task.pts > 0) {
+    btn.addEventListener("click", function(e) {
+      if (e.target.classList.contains("del-task")) return;
+      handleEarn(task.pts, task.name, btn);
+    });
+  } else {
+    btn.addEventListener("click", function(e) {
+      if (e.target.classList.contains("del-task")) return;
+      addPoints(task.pts, task.name);
+      addRipple(e);
+    });
+    if (dailyDeducted >= DAILY_LIMIT) btn.classList.add("blocked");
+  }
+
+  btn.querySelector(".del-task").addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (task.isPreset) {
+      deletePreset(task.id);
+    } else {
+      deleteCustomTask(task.id);
+    }
+  });
+
+  if (!task.isPreset) {
+    btn.querySelector(".edit-task").addEventListener("click", function(e) {
+      e.stopPropagation();
+      startEditTask({
+        id: task.id,
+        name: task.name,
+        pts: task.pts,
+        type: task.pts > 0 ? 'earn' : 'spend',
+        categoryId: task.categoryId || 'cat_all',
+      });
+    });
+  }
+
+  container.appendChild(btn);
+}
+
+// ============ 自定义任务 ============
+function submitTask() {
+  const nameInput = document.getElementById("customName");
+  const ptsInput  = document.getElementById("customPts");
+  const typeSelect = document.getElementById("customType");
+  const catSelect  = document.getElementById("customCategory");
+
+  const name = nameInput.value.trim();
+  let pts = parseInt(ptsInput.value, 10);
+  const type = typeSelect.value;
+  const categoryId = catSelect ? catSelect.value : 'cat_all';
+
+  if (!name)                     { showToast("请输入任务名称", "err"); return; }
+  if (isNaN(pts) || pts <= 0 || pts > 99) { showToast("分值需在 1~99 之间", "err"); return; }
+
+  if (editingTaskId) {
+    // 编辑模式：更新已有任务（仅 earn/spend）
+    const task = customTasks.find(t => t.id === editingTaskId);
+    if (!task) { cancelEditTask(); return; }
+    task.name = name;
+    task.pts = type === "spend" ? -pts : pts;
+    task.type = type;
+    task.categoryId = categoryId;
+    saveCustomTasks();
+    renderTaskCards(activeCategory);
+    refreshSpendButtons();
+    updateDashboardSummary();
+    showToast("✅ 任务已更新：" + name, "ok");
+    cancelEditTask();
+  } else {
+    // 新建模式（仅 earn/spend）
+    const task = {
+      id: "custom_" + Date.now(),
+      name: name,
+      pts: type === "spend" ? -pts : pts,
+      type: type,
+      categoryId: categoryId,
+    };
+    customTasks.push(task);
+    renderTaskCards(activeCategory);
+    saveAll();
+    refreshSpendButtons();
+    updateDashboardSummary();
+    showToast("✅ 已添加：" + name, "ok");
+  }
+
+  nameInput.value = "";
+  ptsInput.value = "5";
+  nameInput.focus();
+}
+
+function startEditTask(task) {
+  editingTaskId = task.id;
+  // 展开表单（任务视图本地编辑，无需跨视图跳转）
+  if (!taskFormOpen) { taskFormOpen = true; taskFormWrap.classList.add("open"); document.getElementById("btnNewTask").textContent = "− 收起表单"; }
+  document.getElementById("customName").value = task.name;
+  const absPts = Math.abs(task.pts);
+  document.getElementById("customPts").value = absPts;
+  document.getElementById("customType").value = task.type;
+  const catSelect = document.getElementById("customCategory");
+  if (catSelect) catSelect.value = task.categoryId || 'cat_all';
+  btnSubmitTask.textContent = "✎ 更新任务";
+  btnCancelEdit.style.display = "";
+  document.getElementById("customName").focus();
+}
+
+function cancelEditTask() {
+  editingTaskId = null;
+  document.getElementById("customName").value = "";
+  document.getElementById("customPts").value = "5";
+  document.getElementById("customType").value = "earn";
+  const catSelect = document.getElementById("customCategory");
+  if (catSelect) catSelect.value = activeCategory !== 'cat_all' ? activeCategory : 'cat_study';
+  btnSubmitTask.textContent = "＋ 添加任务";
+  btnCancelEdit.style.display = "none";
+}
+
+function toggleTaskForm() {
+  taskFormOpen = !taskFormOpen;
+  taskFormWrap.classList.toggle("open", taskFormOpen);
+  document.getElementById("btnNewTask").textContent = taskFormOpen ? "− 收起表单" : "＋ 新建任务";
+  if (!taskFormOpen && editingTaskId) cancelEditTask();
+  if (taskFormOpen) {
+    if (!editingTaskId) {
+      document.getElementById("customName").value = "";
+      document.getElementById("customPts").value = "5";
+      document.getElementById("customType").value = "earn";
+    }
+    document.getElementById("customName").focus();
+  }
+}
+
+function renderExchangeButton(task) {
+  const absPts = Math.abs(task.pts);
+  const bookmarked = isBookmarked(task.id);
+  const btn = document.createElement("button");
+  btn.className = "btn btn-exchange";
+  btn.id = task.id;
+  btn.dataset.custom = "1";
+  btn.dataset.cost = absPts;
+  btn.innerHTML = `
+    <span class="name"><span class="icon">📌</span> ${escapeHtml(task.name)}</span>
+    <span class="price">需 ${absPts} 积分</span>
+    <span class="btn-bookmark${bookmarked ? ' bookmarked' : ''}" title="${bookmarked ? '取消收藏' : '收藏'}">${bookmarked ? '★' : '☆'}</span>
+    <span class="edit-task" title="编辑">✎</span>
+    <span class="del-task" title="删除">×</span>
+  `;
+  btn.addEventListener("click", function(e) {
+    if (e.target.classList.contains("del-task") || e.target.classList.contains("edit-task") || e.target.classList.contains("btn-bookmark")) return;
+    exchangePoints(absPts, task.name);
+    addRipple(e);
+  });
+  btn.querySelector(".btn-bookmark").addEventListener("click", function(e) {
+    e.stopPropagation();
+    toggleBookmark(task.id, task.name, '📌', absPts);
+  });
+  btn.querySelector(".del-task").addEventListener("click", function(e) {
+    e.stopPropagation();
+    deleteCustomTask(task.id);
+  });
+  btn.querySelector(".edit-task").addEventListener("click", function(e) {
+    e.stopPropagation();
+    startEditExchange(task.id);
+  });
+  exchangeBtns.appendChild(btn);
+  if (totalPoints < absPts) btn.classList.add("locked");
+}
+
+function renderAllExchangeItems() {
+  exchangeBtns.innerHTML = "";
+
+  // 预设兑换项
+  PRESET_TASKS.forEach(p => {
+    if (p.type !== 'exchange') return;
+    if (deletedPresets.includes(p.id)) return;
+    const bookmarked = isBookmarked(p.id);
+    const btn = document.createElement("button");
+    btn.className = "btn btn-exchange";
+    btn.dataset.presetId = p.id;
+    btn.dataset.cost = p.cost;
+    btn.innerHTML = `
+      <span class="name"><span class="icon">${p.emoji}</span> ${escapeHtml(p.name)}</span>
+      <span class="price">需 ${p.cost} 积分</span>
+      <span class="btn-bookmark${bookmarked ? ' bookmarked' : ''}" title="${bookmarked ? '取消收藏' : '收藏'}">${bookmarked ? '★' : '☆'}</span>
+      <span class="edit-task" title="编辑">✎</span>
+      <span class="del-task" title="删除预设">×</span>
+    `;
+    btn.addEventListener("click", function(e) {
+      if (e.target.classList.contains("del-task") || e.target.classList.contains("edit-task") || e.target.classList.contains("btn-bookmark")) return;
+      exchangePoints(p.cost, p.name);
+      addRipple(e);
+    });
+    // 收藏按钮
+    btn.querySelector(".btn-bookmark").addEventListener("click", function(e) {
+      e.stopPropagation();
+      toggleBookmark(p.id, p.name, p.emoji, p.cost);
+    });
+    // 编辑按钮：本地编辑，保存时再转换
+    btn.querySelector(".edit-task").addEventListener("click", function(e) {
+      e.stopPropagation();
+      startEditExchange(p.id);
+    });
+    // 删除按钮
+    btn.querySelector(".del-task").addEventListener("click", function(e) {
+      e.stopPropagation();
+      deletePreset(p.id);
+    });
+    exchangeBtns.appendChild(btn);
+    if (totalPoints < p.cost) btn.classList.add("locked");
+  });
+
+  // 自定义兑换项
+  customTasks.forEach(t => {
+    if (t.type !== 'exchange') return;
+    renderExchangeButton(t);
+  });
+}
+
+function deleteCustomTask(id) {
+  if (editingTaskId === id) cancelEditTask();
+  customTasks = customTasks.filter(t => t.id !== id);
+  const btn = document.getElementById(id);
+  if (btn) btn.remove();
+  saveAll();
+  refreshExchangeButtons();
+  renderTaskCards(activeCategory);
+  showToast("🗑️ 任务已删除");
+}
+
+function toggleTaskForm() {
+  taskFormOpen = !taskFormOpen;
+  taskFormWrap.classList.toggle("open", taskFormOpen);
+  document.getElementById("btnNewTask").textContent = taskFormOpen ? "− 收起表单" : "＋ 新建任务";
+  if (taskFormOpen) {
+    document.getElementById("customName").focus();
+  }
+}
+
+// ============ 预设任务管理 ============
+function saveDeletedPresets() {
+  try { localStorage.setItem("my_points_deleted_presets", JSON.stringify(deletedPresets)); } catch (e) {}
+  scheduleCloudSave();
+}
+function loadDeletedPresets() {
+  try {
+    const raw = localStorage.getItem("my_points_deleted_presets");
+    if (raw) { deletedPresets = JSON.parse(raw); }
+  } catch (e) { deletedPresets = []; }
+}
+function updateRestoreButton() {
+  const btn = document.getElementById("btnRestorePresets");
+  if (btn) { btn.style.display = deletedPresets.length > 0 ? "inline-block" : "none"; }
+}
+function deletePreset(presetId) {
+  if (!deletedPresets.includes(presetId)) deletedPresets.push(presetId);
+  saveDeletedPresets();
+  updateRestoreButton();
+  renderTaskCards(activeCategory);
+  renderAllExchangeItems();
+  showToast("🗑️ 预设任务已隐藏（可点击下方恢复按钮恢复）");
+}
+function restoreAllPresets() {
+  deletedPresets = [];
+  saveDeletedPresets();
+  updateRestoreButton();
+  renderTaskCards(activeCategory);
+  renderAllExchangeItems();
+  refreshExchangeButtons();
+  refreshSpendButtons();
+  showToast("✅ 所有预设任务已恢复！", "ok");
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ============ 🏠 愿望清单（多目标） ============
+function loadGoals() {
+  try {
+    const raw = localStorage.getItem("my_points_goals");
+    if (raw) { goals = JSON.parse(raw); return; }
+  } catch(e) {}
+  // 数据迁移：旧版单目标 → 新版多目标
+  try {
+    const oldName = localStorage.getItem("my_points_goal_name");
+    const oldTarget = localStorage.getItem("my_points_goal_target");
+    if (oldName && oldTarget) {
+      goals = [{ id: "g_" + Date.now(), name: oldName, target: parseInt(oldTarget, 10) || 0 }];
+      saveGoals();
+      localStorage.removeItem("my_points_goal_name");
+      localStorage.removeItem("my_points_goal_target");
+      return;
+    }
+  } catch(e) {}
+  goals = [];
+}
+function saveGoals() {
+  try { localStorage.setItem("my_points_goals", JSON.stringify(goals)); } catch(e) {}
+  scheduleCloudSave();
+}
+
+function renderGoalList() {
+  goalList.innerHTML = "";
+  const hasManualGoals = goals.length > 0;
+  const hasBookmarks = bookmarkedExchange.length > 0;
+
+  if (!hasManualGoals && !hasBookmarks) {
+    goalEmpty.style.display = "block";
+    document.getElementById("btnToggleGoal").textContent = "＋ 添加愿望";
+    return;
+  }
+  goalEmpty.style.display = "none";
+  document.getElementById("btnToggleGoal").textContent = "＋ 添加愿望";
+
+  // 渲染收藏的兑换商品（优先显示）
+  bookmarkedExchange.forEach(b => {
+    const pct = Math.min(100, Math.round((totalPoints / b.cost) * 100));
+    const reached = totalPoints >= b.cost && b.cost > 0;
+    const item = document.createElement("div");
+    item.className = "goal-item bookmarked-exchange" + (reached ? " reached" : "");
+    item.innerHTML = `
+      <div class="goal-item-header">
+        <span class="goal-item-name">${escapeHtml(b.emoji)} ${escapeHtml(b.name)}<span class="goal-source-tag">🛒 兑换商品</span></span>
+        <div class="goal-item-actions">
+          <button class="goal-item-btn btn-goal-edit" title="取消收藏" onclick="toggleBookmark('${b.id}')" style="color:#C8853E;">★</button>
+        </div>
+      </div>
+      <div class="goal-bar-outer">
+        <div class="goal-bar-inner" style="width:${pct}%"></div>
+      </div>
+      <div class="goal-stats">${totalPoints} / ${b.cost} 分 (${pct}%)${reached ? ' <span class="goal-reached-badge">🎉 可以兑换啦！</span>' : ''}</div>
+    `;
+    goalList.appendChild(item);
+  });
+
+  // 渲染手动创建的愿望
+  goals.forEach(g => {
+    const pct = Math.min(100, Math.round((totalPoints / g.target) * 100));
+    const reached = totalPoints >= g.target && g.target > 0;
+
+    const item = document.createElement("div");
+    item.className = "goal-item" + (reached ? " reached" : "");
+    item.innerHTML = `
+      <div class="goal-item-header">
+        <span class="goal-item-name">🎯 ${escapeHtml(g.name)}</span>
+        <div class="goal-item-actions">
+          <button class="goal-item-btn btn-goal-edit" title="编辑" onclick="editGoal('${g.id}')">✎</button>
+          <button class="goal-item-btn btn-goal-del" title="删除" onclick="deleteGoal('${g.id}')">×</button>
+        </div>
+      </div>
+      <div class="goal-bar-outer">
+        <div class="goal-bar-inner" style="width:${pct}%"></div>
+      </div>
+      <div class="goal-stats">${totalPoints} / ${g.target} 分 (${pct}%)${reached ? ' <span class="goal-reached-badge">🎉 已达成！</span>' : ''}</div>
+    `;
+    goalList.appendChild(item);
+  });
+}
+
+function updateGoalBars() {
+  // 积分变动时快速更新所有进度条（包括收藏商品和手动愿望）
+  const totalItems = bookmarkedExchange.length + goals.length;
+  const items = goalList.querySelectorAll(".goal-item");
+  if (items.length !== totalItems) { renderGoalList(); return; }
+
+  let idx = 0;
+  // 更新收藏商品进度
+  bookmarkedExchange.forEach(b => {
+    const pct = Math.min(100, Math.round((totalPoints / b.cost) * 100));
+    const reached = totalPoints >= b.cost && b.cost > 0;
+    const item = items[idx];
+    item.classList.toggle("reached", reached);
+    const bar = item.querySelector(".goal-bar-inner");
+    if (bar) bar.style.width = pct + "%";
+    const stats = item.querySelector(".goal-stats");
+    if (stats) stats.innerHTML = `${totalPoints} / ${b.cost} 分 (${pct}%)${reached ? ' <span class="goal-reached-badge">🎉 可以兑换啦！</span>' : ''}`;
+    idx++;
+  });
+  // 更新手动愿望进度
+  goals.forEach(g => {
+    const pct = Math.min(100, Math.round((totalPoints / g.target) * 100));
+    const reached = totalPoints >= g.target && g.target > 0;
+    const item = items[idx];
+    item.classList.toggle("reached", reached);
+    const bar = item.querySelector(".goal-bar-inner");
+    if (bar) bar.style.width = pct + "%";
+    const stats = item.querySelector(".goal-stats");
+    if (stats) stats.innerHTML = `${totalPoints} / ${g.target} 分 (${pct}%)${reached ? ' <span class="goal-reached-badge">🎉 已达成！</span>' : ''}`;
+    idx++;
+  });
+}
+
+function openAddGoal() {
+  editingGoalId = null;
+  document.getElementById("goalNameInput").value = "";
+  document.getElementById("goalTargetInput").value = "100";
+  goalSubmitBtn.textContent = "💾 保存";
+  goalSetForm.style.display = "flex";
+  document.getElementById("goalNameInput").focus();
+}
+
+function editGoal(id) {
+  const g = goals.find(g => g.id === id);
+  if (!g) return;
+  editingGoalId = id;
+  document.getElementById("goalNameInput").value = g.name;
+  document.getElementById("goalTargetInput").value = g.target;
+  goalSubmitBtn.textContent = "✎ 更新";
+  goalSetForm.style.display = "flex";
+  document.getElementById("goalNameInput").focus();
+}
+
+function cancelGoalEdit() {
+  editingGoalId = null;
+  goalSetForm.style.display = "none";
+  document.getElementById("goalNameInput").value = "";
+  document.getElementById("goalTargetInput").value = "100";
+}
+
+function deleteGoal(id) {
+  goals = goals.filter(g => g.id !== id);
+  saveGoals();
+  if (editingGoalId === id) cancelGoalEdit();
+  renderGoalList();
+  showToast("🗑️ 愿望已删除");
+}
+
+function submitGoal() {
+  const nameInput = document.getElementById("goalNameInput");
+  const targetInput = document.getElementById("goalTargetInput");
+  const name = nameInput.value.trim();
+  const target = parseInt(targetInput.value, 10) || 0;
+  if (!name) { showToast("请输入愿望名称", "warn"); return; }
+  if (target <= 0) { showToast("目标积分需大于 0", "warn"); return; }
+
+  if (editingGoalId) {
+    const g = goals.find(g => g.id === editingGoalId);
+    if (g) { g.name = name; g.target = target; }
+    showToast("✅ 愿望已更新：" + name + " · " + target + " 分", "ok");
+  } else {
+    goals.push({ id: "g_" + Date.now(), name: name, target: target });
+    showToast("✅ 愿望已添加：" + name + " · " + target + " 分", "ok");
+  }
+
+  saveGoals();
+  cancelGoalEdit();
+  renderGoalList();
+}
+
+// ============ 🏠 概览仪表盘 ============
+function updateDashboardSummary() {
+  const items = getTodayLogItems();
+  let earned = 0, spent = 0;
+  items.forEach(item => {
+    if (!item.isBlocked) {
+      if (item.delta > 0) earned += item.delta;
+      else spent += Math.abs(item.delta);
+    }
+  });
+  const net = earned - spent;
+  document.getElementById("sumEarned").textContent = "+" + earned;
+  document.getElementById("sumSpent").textContent = "−" + spent;
+  const netEl = document.getElementById("sumNet");
+  netEl.textContent = (net >= 0 ? "+" : "") + net;
+  netEl.className = "s-val " + (net >= 0 ? "net-pos" : "net-neg");
+  document.getElementById("sumBalance").textContent = totalPoints;
+}
+
+function getTodayLogItems() {
+  const today = getTodayStr();
+  const items = [];
+  logList.querySelectorAll("li[data-date]").forEach(li => {
+    if (li.dataset.date !== today) return;
+    const label = li.dataset.label || "";
+    const delta = parseInt(li.dataset.delta, 10) || 0;
+    const time  = (li.querySelector(".time") || {}).textContent || "";
+    items.push({ label: label, delta: delta, time: time, isBlocked: li.classList.contains("blocked-log") });
+  });
+  return items;
+}
+
+// ============ 🧾 发票 & 🖨️ 打印机动画 ============
+function buildReceiptData(items) {
+  let totalEarned = 0, totalSpent = 0;
+  items.forEach(item => {
+    if (!item.isBlocked) {
+      if (item.delta > 0) totalEarned += item.delta;
+      else totalSpent += Math.abs(item.delta);
+    }
+  });
+  const netChange = totalEarned - totalSpent;
+  const quote = RECEIPT_QUOTES[Math.floor(Math.random() * RECEIPT_QUOTES.length)];
+  return {
+    id: "r_" + Date.now(),
+    date: getTodayStr(), time: getNowTimeStr(), dateChinese: getNowChinese(),
+    items: items,
+    summary: { totalEarned, totalSpent, netChange, finalBalance: totalPoints },
+    quote: quote,
+  };
+}
+
+function renderReceiptHTML(data, isArchived) {
+  let itemsHTML = "";
+  if (data.items.length === 0) {
+    itemsHTML = '<div class="receipt-empty">📭 今日暂无流水记录</div>';
+  } else {
+    data.items.forEach(item => {
+      const ptsClass = item.delta > 0 ? "earn" : "spend";
+      const sign = item.delta > 0 ? "+" : "";
+      itemsHTML += `
+        <div class="receipt-item">
+          <span class="item-label">${escapeHtml(item.label)}</span>
+          <span class="item-dots">· · · · · · · · · · ·</span>
+          <span class="item-pts ${ptsClass}">${sign}${item.delta} 分</span>
+        </div>`;
+    });
+  }
+  const s = data.summary;
+  const netSign = s.netChange > 0 ? "+" : "";
+  const netClass = s.netChange >= 0 ? "earn" : "spend";
+  return `
+    <div class="receipt-header">
+      ${isArchived ? '<span class="archive-badge">📦 已存档</span>' : ''}
+      <div class="receipt-stars">* * * * * * * * * * * *</div>
+      <div class="receipt-title">个人积分每日结算发票</div>
+      <div class="receipt-stars">* * * * * * * * * * * *</div>
+      <div class="receipt-date">${data.dateChinese}</div>
+      ${isArchived ? '' : '<div class="receipt-no">NO. ' + data.id.substring(2, 12) + '</div>'}
+    </div>
+    <div class="receipt-divider">— — — — — — — — — — — —</div>
+    <div class="receipt-items">${itemsHTML}</div>
+    <div class="receipt-divider">— — — — — — — — — — — —</div>
+    <div class="receipt-summary">
+      <div class="sum-row"><span class="sum-label">📈 今日获取总积分</span><span class="sum-val earn">+${s.totalEarned}</span></div>
+      <div class="sum-row"><span class="sum-label">📉 今日扣除 / 消费</span><span class="sum-val spend">−${s.totalSpent}</span></div>
+      <div class="sum-row"><span class="sum-label">📊 今日净变动</span><span class="sum-val ${netClass}">${netSign}${s.netChange}</span></div>
+      <div class="sum-row" style="margin-top:8px;padding-top:8px;border-top:1px dashed #D5CFC0;">
+        <span class="sum-label">💰 期末总积分余额</span><span class="sum-val balance">${s.finalBalance} 分</span>
+      </div>
+    </div>
+    <div class="receipt-divider">— — — — — — — — — — — —</div>
+    <div class="receipt-footer"><span class="quote-icon">💌</span><p>${escapeHtml(data.quote)}</p></div>
+    <div class="tear-guide" id="tearGuide">✂︎  捏住向下撕开，存入档案  ✂︎</div>`;
+}
+
+function showReceipt() {
+  const items = getTodayLogItems();
+  if (items.length === 0) {
+    showToast("📭 今日暂无流水记录", "warn");
+    return;
+  }
+  const data = buildReceiptData(items);
+  receiptPaper.innerHTML = renderReceiptHTML(data, false);
+  receiptPaper._receiptData = data;
+  receiptPaper.classList.remove("torn", "fly-to-archive", "tearable", "tearing");
+  receiptActions.style.display = "flex";
+
+  receiptOverlay.classList.add("show");
+  printerBar.classList.add("active");
+  printerStatus.classList.add("show");
+
+  let tickCount = 0;
+  const tickInterval = setInterval(() => {
+    playSound("tick");
+    tickCount++;
+    printerStatus.textContent = "打印中" + "·".repeat((tickCount % 3) + 1);
+    if (tickCount >= 12) {
+      clearInterval(tickInterval);
+      printerStatus.textContent = "打印完成 ✓";
+      setTimeout(() => { printerStatus.classList.remove("show"); printerBar.classList.remove("active"); }, 600);
+    }
+  }, 100);
+
+  receiptPaper.classList.add("feeding");
+  receiptPaper.addEventListener("animationend", function onFeedEnd() {
+    receiptPaper.removeEventListener("animationend", onFeedEnd);
+    receiptPaper.classList.remove("feeding");
+    receiptPaper.style.clipPath = "";
+    enableTearOff();
+  }, { once: true });
+}
+
+function enableTearOff() {
+  receiptPaper.classList.add("tearable");
+  const guide = document.getElementById("tearGuide");
+  if (!guide) return;
+
+  const onStart = (e) => {
+    e.preventDefault();
+    isTearing = true; tearStartY = e.touches ? e.touches[0].clientY : e.clientY; tearOffset = 0;
+    receiptPaper.classList.add("tearing");
+    receiptPaper.style.transition = "none";
+  };
+  const onMove = (e) => {
+    if (!isTearing) return;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    tearOffset = clientY - tearStartY;
+    if (tearOffset < 0) tearOffset = 0;
+    receiptPaper.style.transform = `translateY(${tearOffset}px) rotate(${tearOffset * 0.02}deg)`;
+    if (tearOffset > 50) { guide.textContent = "✂︎  松手！撕下小票  ✂︎"; guide.style.color = "#C85B38"; }
+    else { guide.textContent = "✂︎  捏住向下撕开，存入档案  ✂︎"; guide.style.color = "#B5A890"; }
+  };
+  const onEnd = () => {
+    if (!isTearing) return;
+    isTearing = false;
+    receiptPaper.classList.remove("tearing");
+    receiptPaper.style.transition = "transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94)";
+    if (tearOffset > 60) {
+      playSound("tear");
+      receiptPaper.classList.add("torn");
+      receiptPaper.classList.remove("tearable");
+      receiptActions.style.display = "none";
+      receiptPaper.addEventListener("animationend", function onTearEnd() {
+        receiptPaper.removeEventListener("animationend", onTearEnd);
+        autoArchiveFromTear(receiptPaper._receiptData);
+        closeReceipt();
+        receiptPaper.classList.remove("torn");
+        receiptPaper.style.transform = "";
+      }, { once: true });
+    } else {
+      receiptPaper.style.transform = "";
+      guide.textContent = "✂︎  捏住向下撕开，存入档案  ✂︎";
+      guide.style.color = "#B5A890";
+    }
+  };
+
+  receiptPaper.addEventListener("mousedown", onStart);
+  receiptPaper.addEventListener("touchstart", onStart, { passive: false });
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("touchmove", onMove, { passive: false });
+  window.addEventListener("mouseup", onEnd);
+  window.addEventListener("touchend", onEnd);
+
+  receiptPaper._cleanupTear = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("touchmove", onMove);
+    window.removeEventListener("mouseup", onEnd);
+    window.removeEventListener("touchend", onEnd);
+    receiptPaper.removeEventListener("mousedown", onStart);
+    receiptPaper.removeEventListener("touchstart", onStart);
+  };
+}
+
+function autoArchiveFromTear(data) {
+  if (!data || !data.items || data.items.length === 0) return;
+  receipts.unshift(data);
+  saveReceipts();
+  renderHistoryList();
+  const today = getTodayStr();
+  logList.querySelectorAll("li[data-date]").forEach(li => { if (li.dataset.date === today) li.remove(); });
+  if (logList.children.length === 0) { logList.innerHTML = '<li class="empty">暂无记录，快去完成第一个任务吧 ✨</li>'; }
+  // 重置熔断计数器
+  dailyDeducted = 0;
+  saveDailyData();
+  updateDailyBar();
+  savePoints();
+  updateDashboardSummary();
+  refreshSpendButtons();
+
+  const historyRect = historyCard.getBoundingClientRect();
+  const paperRect = receiptPaper.getBoundingClientRect();
+  const flyX = historyRect.left + historyRect.width / 2 - (paperRect.left + paperRect.width / 2);
+  const flyY = historyRect.top + 40 - paperRect.top;
+  receiptPaper.style.setProperty("--fly-x", flyX + "px");
+  receiptPaper.style.setProperty("--fly-y", flyY + "px");
+  receiptPaper.classList.add("fly-to-archive");
+
+  historyCard.classList.add("receiving");
+  if (!historyCard.classList.contains("open")) { historyCard.classList.add("open"); }
+  setTimeout(() => { historyCard.classList.remove("receiving"); receiptPaper.classList.remove("fly-to-archive"); }, 900);
+  showToast("🧾 小票已撕下并存入档案盒！今日圆满结束 ✨", "ok");
+}
+
+function closeReceipt() {
+  if (receiptPaper._cleanupTear) { receiptPaper._cleanupTear(); receiptPaper._cleanupTear = null; }
+  isTearing = false;
+  receiptPaper.classList.remove("tearable", "tearing", "feeding", "torn", "fly-to-archive");
+  receiptPaper.style.transform = ""; receiptPaper.style.clipPath = "";
+  receiptOverlay.classList.remove("show");
+  printerBar.classList.remove("active");
+  printerStatus.classList.remove("show");
+}
+
+function downloadReceipt() { downloadReceiptFromPaper(receiptPaper, "今日结算小票"); }
+
+// ============ 💾 存档 ============
+function archiveTodayAndClear() {
+  const items = getTodayLogItems();
+  if (items.length === 0) { showToast("📭 今日暂无流水记录，无需存档", "warn"); return; }
+  const data = buildReceiptData(items);
+  receipts.unshift(data);
+  saveReceipts();
+  renderHistoryList();
+  const today = getTodayStr();
+  logList.querySelectorAll("li[data-date]").forEach(li => { if (li.dataset.date === today) li.remove(); });
+  if (logList.children.length === 0) { logList.innerHTML = '<li class="empty">暂无记录，快去完成第一个任务吧 ✨</li>'; }
+  // 重置熔断计数器
+  dailyDeducted = 0;
+  saveDailyData();
+  updateDailyBar();
+  savePoints();
+  updateDashboardSummary();
+  refreshSpendButtons();
+  showToast("💾 今日流水已存档！共 " + items.length + " 条记录", "ok");
+  if (receiptOverlay.classList.contains("show")) { closeReceipt(); }
+  if (!historyCard.classList.contains("open")) { historyCard.classList.add("open"); }
+}
+
+// ============ 🎁 兑换商品本地 CRUD ============
+function toggleExchangeForm() {
+  exchangeFormOpen = !exchangeFormOpen;
+  document.getElementById("exchangeFormWrap").classList.toggle("open", exchangeFormOpen);
+  document.getElementById("btnNewExchange").textContent = exchangeFormOpen ? "− 收起表单" : "＋ 添加兑换商品";
+  if (!exchangeFormOpen && editingExchangeId) cancelExchangeEdit();
+  if (exchangeFormOpen && !editingExchangeId) {
+    document.getElementById("exchangeName").value = "";
+    document.getElementById("exchangeCost").value = "10";
+    document.getElementById("exchangeEmoji").value = "";
+    document.getElementById("exchangeName").focus();
+  }
+}
+
+function submitExchangeItem() {
+  const nameInput = document.getElementById("exchangeName");
+  const costInput = document.getElementById("exchangeCost");
+  const emojiInput = document.getElementById("exchangeEmoji");
+  const name = nameInput.value.trim();
+  const cost = parseInt(costInput.value, 10) || 0;
+  const emoji = emojiInput.value.trim() || "🎁";
+
+  if (!name) { showToast("请输入商品名称", "err"); return; }
+  if (cost <= 0 || cost > 999) { showToast("积分需在 1~999 之间", "err"); return; }
+
+  if (editingExchangeId) {
+    // 编辑模式
+    // 检查是否是预设兑换
+    const presetTask = PRESET_TASKS.find(p => p.id === editingExchangeId && p.type === 'exchange');
+    if (presetTask) {
+      // 预设转为自定义
+      if (!deletedPresets.includes(presetTask.id)) deletedPresets.push(presetTask.id);
+      saveDeletedPresets();
+      updateRestoreButton();
+      const newTask = {
+        id: "custom_" + Date.now(),
+        name: name,
+        pts: cost,
+        type: "exchange",
+        categoryId: "cat_all",
+      };
+      customTasks.push(newTask);
+      saveCustomTasks();
+      // 同步收藏数据
+      const bm = bookmarkedExchange.find(b => b.id === editingExchangeId);
+      if (bm) { bm.id = newTask.id; bm.name = name; bm.cost = cost; bm.emoji = emoji; saveBookmarks(); }
+      showToast("✅ 兑换商品已更新（已转为自定义）", "ok");
+    } else {
+      // 自定义兑换：直接更新
+      const task = customTasks.find(t => t.id === editingExchangeId);
+      if (task) {
+        task.name = name; task.pts = cost; task.type = "exchange";
+        saveCustomTasks();
+        // 同步收藏数据
+        const bm = bookmarkedExchange.find(b => b.id === editingExchangeId);
+        if (bm) { bm.name = name; bm.cost = cost; bm.emoji = emoji; saveBookmarks(); }
+        showToast("✅ 兑换商品已更新：" + name, "ok");
+      }
+    }
+    cancelExchangeEdit();
+  } else {
+    // 新建模式
+    const task = {
+      id: "custom_" + Date.now(),
+      name: name,
+      pts: cost,
+      type: "exchange",
+      categoryId: "cat_all",
+    };
+    customTasks.push(task);
+    saveCustomTasks();
+    showToast("✅ 已添加兑换商品：" + name, "ok");
+  }
+
+  renderAllExchangeItems();
+  renderGoalList();
+  refreshExchangeButtons();
+  updateDashboardSummary();
+  // 清空表单
+  nameInput.value = ""; costInput.value = "10"; emojiInput.value = "";
+  document.getElementById("exchangeName").focus();
+}
+
+function startEditExchange(id) {
+  editingExchangeId = id;
+  // 展开表单
+  if (!exchangeFormOpen) { exchangeFormOpen = true; document.getElementById("exchangeFormWrap").classList.add("open"); document.getElementById("btnNewExchange").textContent = "− 收起表单"; }
+
+  // 查找兑换项数据
+  const presetTask = PRESET_TASKS.find(p => p.id === id && p.type === 'exchange');
+  const customTask = customTasks.find(t => t.id === id && t.type === 'exchange');
+  const item = presetTask || customTask;
+  if (!item) return;
+
+  document.getElementById("exchangeName").value = item.name;
+  document.getElementById("exchangeCost").value = presetTask ? presetTask.cost : Math.abs(item.pts);
+  // 预设用自带的 emoji，自定义先留空
+  document.getElementById("exchangeEmoji").value = presetTask ? (presetTask.emoji || "") : "";
+
+  document.getElementById("btnSubmitExchange").textContent = "✎ 更新";
+  document.getElementById("btnCancelExchange").style.display = "";
+  document.getElementById("exchangeName").focus();
+}
+
+function cancelExchangeEdit() {
+  editingExchangeId = null;
+  document.getElementById("exchangeName").value = "";
+  document.getElementById("exchangeCost").value = "10";
+  document.getElementById("exchangeEmoji").value = "";
+  document.getElementById("btnSubmitExchange").textContent = "＋ 添加";
+  document.getElementById("btnCancelExchange").style.display = "none";
+}
+
+// ============ ⭐ 收藏联动 ============
+function loadBookmarks() {
+  try { const raw = localStorage.getItem("my_points_bookmarked_exchange"); if (raw) bookmarkedExchange = JSON.parse(raw); } catch(e) { bookmarkedExchange = []; }
+}
+function saveBookmarks() {
+  try { localStorage.setItem("my_points_bookmarked_exchange", JSON.stringify(bookmarkedExchange)); } catch(e) {}
+  scheduleCloudSave();
+}
+function toggleBookmark(id, name, emoji, cost) {
+  const idx = bookmarkedExchange.findIndex(b => b.id === id);
+  if (idx >= 0) {
+    const removed = bookmarkedExchange[idx];
+    bookmarkedExchange.splice(idx, 1);
+    showToast("已取消收藏：" + removed.name);
+  } else if (name) {
+    bookmarkedExchange.push({ id, name, emoji: emoji || '📌', cost: cost || 0 });
+    showToast("⭐ 已收藏：" + name + "  → 进度条已加入愿望清单");
+  }
+  saveBookmarks();
+  renderAllExchangeItems();
+  renderGoalList();
+}
+function isBookmarked(id) {
+  return bookmarkedExchange.some(b => b.id === id);
+}
+
+// ============ 📜 历史发票存档 ============
+function loadReceipts() {
+  try { const raw = localStorage.getItem("my_points_receipts"); if (raw) receipts = JSON.parse(raw); } catch (e) { receipts = []; }
+}
+function saveReceipts() {
+  try { localStorage.setItem("my_points_receipts", JSON.stringify(receipts)); } catch (e) {}
+  scheduleCloudSave();
+}
+function toggleHistory() { historyCard.classList.toggle("open"); }
+function renderHistoryList() {
+  historyList.innerHTML = "";
+  if (receipts.length === 0) {
+    historyList.innerHTML = '<div class="hi-empty">暂无存档发票，点击「💾 存档并清空今日流水」开始存档吧 ✨</div>';
+    return;
+  }
+  receipts.forEach(r => {
+    const s = r.summary;
+    const netSign = s.netChange >= 0 ? "+" : "";
+    const netClass = s.netChange >= 0 ? "positive" : "negative";
+    const div = document.createElement("div");
+    div.className = "history-item";
+    div.innerHTML = `
+      <div style="flex:1;min-width:0;" onclick="viewHistoryReceipt('${r.id}')">
+        <div class="hi-date">🧾 ${r.date}  (${r.time})</div>
+        <div class="hi-summary">
+          <span style="color:#6B8F71;">+${s.totalEarned}</span>
+          <span style="color:#C85B38;">−${s.totalSpent}</span>
+          <span style="color:#8A9B92;">余额 ${s.finalBalance}</span>
+        </div>
+      </div>
+      <span class="hi-net ${netClass}" onclick="viewHistoryReceipt('${r.id}')" style="cursor:pointer;margin-right:8px;">${netSign}${s.netChange}</span>
+      <button class="hi-delete" title="删除此存档" onclick="deleteHistoryReceipt('${r.id}', event)">🗑</button>
+    `;
+    historyList.appendChild(div);
+  });
+}
+function viewHistoryReceipt(id) {
+  const r = receipts.find(r => r.id === id);
+  if (!r) return;
+  currentViewingReceiptId = id;
+  historyReceiptPaper.innerHTML = renderReceiptHTML(r, true);
+  historyReceiptPaper._receiptData = r;
+  historyReceiptOverlay.classList.add("show");
+}
+function closeHistoryReceipt() { historyReceiptOverlay.classList.remove("show"); currentViewingReceiptId = null; }
+function downloadHistoryReceipt() {
+  downloadReceiptFromPaper(historyReceiptPaper, "结算小票_" + (historyReceiptPaper._receiptData?.date || "archive"));
+}
+function deleteHistoryReceipt(id, event) {
+  event.stopPropagation();
+  receipts = receipts.filter(r => r.id !== id);
+  saveReceipts();
+  renderHistoryList();
+  showToast("🗑️ 发票存档已删除");
+}
+function downloadReceiptFromPaper(paperEl, filename) {
+  if (typeof html2canvas === "undefined") {
+    showToast("⏳ 正在加载导出组件，请稍后再点一次...", "warn");
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js";
+    script.onload = () => { showToast("✅ 加载完成，请再次点击下载", "ok"); };
+    document.head.appendChild(script);
+    return;
+  }
+  showToast("🖨️ 正在生成图片...", "");
+  html2canvas(paperEl, { backgroundColor: "#FAF6EE", scale: 2, useCORS: true, logging: false })
+    .then(canvas => {
+      const link = document.createElement("a");
+      link.download = (filename || "结算小票") + ".png";
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      showToast("✅ 小票图片已下载！", "ok");
+    }).catch(() => { showToast("❌ 导出失败，请重试", "err"); });
+}
+
+// ============ 重置 ============
+function showResetDialog() { resetOverlay.classList.add("show"); }
+function hideResetDialog() { resetOverlay.classList.remove("show"); }
+function doReset() {
+  totalPoints = 0; dailyDeducted = 0; dailyDate = getTodayStr();
+  customTasks = []; receipts = []; deletedPresets = [];
+  goals = []; editingGoalId = null; editingTaskId = null; bookmarkedExchange = [];
+  exchangeFormOpen = false; editingExchangeId = null;
+  categories = DEFAULT_CATEGORIES.map(c => ({...c}));
+  activeCategory = 'cat_all';
+  pointsDisplay.textContent = 0;
+  logList.innerHTML = '<li class="empty">暂无记录，快去完成第一个任务吧 ✨</li>';
+  try {
+    ["my_points_total","my_points_log_html","my_points_daily_date",
+     "my_points_daily_deducted","my_points_custom_tasks","my_points_receipts",
+     "my_points_deleted_presets","my_points_categories",
+     "my_points_goal_name","my_points_goal_target","my_points_goals",
+     "my_points_bookmarked_exchange"].forEach(k => localStorage.removeItem(k));
+  } catch (e) {}
+  hideResetDialog();
+  updateDailyBar();
+  renderGoalList();
+  updateDashboardSummary();
+  renderCategoryTabs();
+  renderTaskCards('cat_all');
+  renderAllExchangeItems();
+  // 重置兑换表单 UI
+  document.getElementById("exchangeFormWrap").classList.remove("open");
+  document.getElementById("btnNewExchange").textContent = "＋ 添加兑换商品";
+  cancelExchangeEdit();
+  renderHistoryList();
+  updateRestoreButton();
+  refreshExchangeButtons();
+  refreshSpendButtons();
+  saveCategories();
+  saveStateToCloud(); // 立即同步云端（重置后云端也是空数据）
+  showToast("🔄 数据已全部重置");
+}
+
+// ============ 持久化 ============
+function saveAll() { savePoints(); saveDailyData(); saveCustomTasks(); saveDeletedPresets(); scheduleCloudSave(); }
+function savePoints() {
+  try { localStorage.setItem("my_points_total", totalPoints); localStorage.setItem("my_points_log_html", logList.innerHTML); } catch (e) {}
+  scheduleCloudSave();
+}
+function saveCustomTasks() {
+  try { localStorage.setItem("my_points_custom_tasks", JSON.stringify(customTasks)); } catch (e) {}
+  scheduleCloudSave();
+}
+
+function loadAll() {
+  try {
+    const s = localStorage.getItem("my_points_total");
+    if (s !== null) { totalPoints = parseInt(s, 10) || 0; pointsDisplay.textContent = totalPoints; }
+    const lh = localStorage.getItem("my_points_log_html");
+    if (lh && !lh.includes("暂无记录")) logList.innerHTML = lh;
+  } catch (e) {}
+  loadDailyData();
+  updateDailyBar();
+  // 加载自定义任务
+  try {
+    const raw = localStorage.getItem("my_points_custom_tasks");
+    if (raw) {
+      customTasks = JSON.parse(raw);
+      // 旧数据兼容: 没有 categoryId 的默认 cat_all
+      customTasks.forEach(t => { if (!t.categoryId) t.categoryId = 'cat_all'; });
+    }
+  } catch (e) {}
+  loadReceipts();
+  loadDeletedPresets();
+  loadGoals();
+  loadBookmarks();
+  initCategories();
+
+  // 渲染所有 UI
+  renderCategoryTabs();
+  renderCategorySelect();
+  renderTaskCards(activeCategory);
+  renderAllExchangeItems();
+  renderHistoryList();
+  updateRestoreButton();
+  updateDashboardSummary();
+  renderGoalList();
+  refreshExchangeButtons();
+  refreshSpendButtons();
+  updateSegSlider(currentView);
+}
+
+// ============ 启动 ============
+// 恢复上次视图
+try {
+  const saved = sessionStorage.getItem("my_points_current_view");
+  if (saved && ['dashboard','tasks','ledger'].includes(saved)) {
+    currentView = saved;
+    document.querySelectorAll('.view-panel').forEach(p => {
+      p.classList.remove('active');
+      p.style.opacity = '0';
+      p.style.display = 'none';
+    });
+    const target = document.getElementById('view-' + currentView);
+    if (target) {
+      target.style.display = '';
+      target.classList.add('active');
+      target.style.opacity = '1';
+    }
+    document.querySelectorAll('.segment').forEach(seg => {
+      seg.classList.toggle('active', seg.dataset.view === currentView);
+    });
+  }
+} catch(e) {}
+
+loadAll();
+updateSegSlider(currentView);
+
+// ===== 🔗 启动后尝试从云端恢复数据（异步，不阻塞页面） =====
+(async function initCloudSync() {
+  await loadStateFromCloud();   // 云端有数据 → 覆盖本地 → 保存到 localStorage
+
+  // 云端恢复后，刷新所有 UI（让云端的积分/任务/愿望等显示出来）
+  pointsDisplay.textContent = totalPoints;
+  updateDailyBar();
+  renderCategoryTabs();
+  renderCategorySelect();
+  renderTaskCards(activeCategory);
+  renderAllExchangeItems();
+  renderHistoryList();
+  updateRestoreButton();
+  updateDashboardSummary();
+  renderGoalList();
+  refreshExchangeButtons();
+  refreshSpendButtons();
+  updateSegSlider(currentView);
+})();
+
+setInterval(() => {
+  const today = getTodayStr();
+  if (dailyDate !== today) {
+    checkNewDay();
+    refreshSpendButtons();
+    refreshExchangeButtons();
+    updateDailyBar();
+    updateDashboardSummary();
+    updateGoalBars();
+  }
+}, 60000);
+</script>
+
+  <!-- ===== PWA Service Worker 注册 ===== -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/vibe-coding----/sw.js')
+          .then(reg => console.log('✅ PWA 离线缓存已就绪', reg.scope))
+          .catch(err => console.log('⚠️ PWA Service Worker 注册失败：', err.message));
+      });
+    }
+  </script>
+</body>
+</html>
