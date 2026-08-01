@@ -1244,15 +1244,43 @@ async function loadStateFromCloud() {
     }
 
     if (data && data.content) {
-      // 云端有数据 → 解析 JSON 并恢复所有状态
-      const snapshot = JSON.parse(data.content);
-      restoreStateFromSnapshot(snapshot);
+      // 云端有数据 → 安全解析（jsonb 类型可能已被 JS 客户端自动解析为对象）
+      var snapshot;
+      try {
+        snapshot = (typeof data.content === "string")
+          ? JSON.parse(data.content)
+          : data.content;
+      } catch (e) {
+        console.warn("⚠️ 云端数据格式异常，跳过恢复：", e.message);
+        return;
+      }
 
-      // 同步写入 localStorage（确保离线时也能用）
-      saveAllToLocal();
-      console.log("✅ 已从云端恢复数据（积分：" + totalPoints + "）");
+      // 【保护机制】判断云端数据是否有实质内容
+      var cloudIsEmpty = (snapshot.totalPoints || 0) === 0
+        && (!snapshot.customTasks || snapshot.customTasks.length === 0)
+        && (!snapshot.receipts || snapshot.receipts.length === 0)
+        && (!snapshot.goals || snapshot.goals.length === 0)
+        && (!snapshot.bookmarkedExchange || snapshot.bookmarkedExchange.length === 0);
+
+      // 判断本地是否有实质数据
+      var localHasData = totalPoints !== 0
+        || customTasks.length > 0
+        || receipts.length > 0
+        || goals.length > 0
+        || bookmarkedExchange.length > 0;
+
+      if (cloudIsEmpty && localHasData) {
+        // 云端只有空壳，但本地有真实数据 → 保护本地，上传到云端
+        console.log("🛡️ 云端数据为空，本地数据保留 → 将本地上传至云端");
+        saveStateToCloud();
+      } else {
+        // 云端有实质数据 → 恢复到本地
+        restoreStateFromSnapshot(snapshot);
+        saveAllToLocal();
+        console.log("✅ 已从云端恢复数据（积分：" + totalPoints + "）");
+      }
     } else {
-      // 云端还没有数据（首次使用）→ 把当前 localStorage 数据上传到云端
+      // 云端还没有数据（首次使用）→ 把当前本地数据上传到云端
       console.log("ℹ️ 云端暂无数据，将本地数据上传到云端");
       saveStateToCloud();
     }
